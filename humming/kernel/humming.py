@@ -7,7 +7,7 @@ from typing import ClassVar
 
 import jinja2
 
-import humming.jit.utils as jit_utils
+import humming.utils.jit as jit_utils
 from humming import dtypes
 from humming.config import (
     ComputeConfig,

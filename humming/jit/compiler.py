@@ -8,7 +8,7 @@ import torch
 from cuda.bindings import nvrtc
 from filelock import FileLock
 
-import humming.jit.utils as jit_utils
+import humming.utils.jit as jit_utils
 from humming.utils.cuda import filter_cuda_paths
 
 

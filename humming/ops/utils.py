@@ -8,7 +8,7 @@ import torch
 import torch.utils.cpp_extension
 from filelock import FileLock
 
-from humming.jit.utils import get_humming_cache_dir, get_humming_lock_filename, hash_path_content
+import humming.utils.jit as jit_utils
 from humming.utils.cuda import filter_cuda_paths
 
 _libs = {}
@@ -40,12 +40,12 @@ def get_humming_launcher_build_dir():
     import humming
 
     dirname = os.path.dirname(humming.__file__)
-    launcher_code_hash = hash_path_content(
+    launcher_code_hash = jit_utils.hash_path_content(
         path=os.path.join(dirname, "csrc/launcher/"),
         releative=True,
     )
 
-    cache_dir = get_humming_cache_dir()
+    cache_dir = jit_utils.get_humming_cache_dir()
     py_version = f"py{sys.version_info.major}{sys.version_info.minor}"
     torch_major, torch_minor = torch.__version__.split(".")[:2]
     torch_version = f"torch{torch_major}{torch_minor}"
@@ -68,7 +68,7 @@ def init_humming_launcher():
         return
 
     USE_TORCH_STABLE_API = Version(torch.__version__) >= Version("2.10")
-    lock_filename = get_humming_lock_filename("launcher")
+    lock_filename = jit_utils.get_humming_lock_filename("launcher")
     with FileLock(lock_filename):
         import humming
 

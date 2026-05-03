@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 import cuda.bindings.driver as cbd
 import torch
 
-import humming.jit.utils as jit_utils
+import humming.utils.jit as jit_utils
 from humming import dtypes
 from humming.jit.compiler import NVCCCompiler, NVRTCCompiler
 

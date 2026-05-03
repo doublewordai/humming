@@ -12,7 +12,7 @@ from pathlib import Path
 from elftools.elf.elffile import ELFFile
 from filelock import FileLock
 
-import humming.jit.utils as jit_utils
+import humming.utils.jit as jit_utils
 
 
 def read_symbol_value(filename, symbol_name, default_value=None):

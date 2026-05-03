@@ -147,17 +147,19 @@ def filter_cuda_paths(
     binaries = required_binaries or []
     results = []
     matched_without_binaries = []
+
+    def has_header(env, header):
+        return any(os.path.exists(os.path.join(p, header)) for p in env["include_paths"])
+
     for env in find_all_cuda_paths():
         if env["major"] != target_major:
             continue
-        if target_minor is not None and env["minor"] is not None and env["minor"] != target_minor:
-            continue
+        if target_minor is not None and env["minor"] is not None:
+            if env["minor"] != target_minor:
+                continue
         if source is not None and env["source"] != source:
             continue
-        if not all(
-            any(os.path.exists(os.path.join(p, h)) for p in env["include_paths"])
-            for h in headers
-        ):
+        if not all(has_header(env, h) for h in headers):
             continue
         matched_without_binaries.append(env)
         if not all(b in env["binaries"] for b in binaries):
@@ -165,26 +167,28 @@ def filter_cuda_paths(
         results.append(env)
     if target_minor is None:
         results.sort(key=lambda e: (e["minor"] is None, -(e["minor"] or 0)))
-    if not results:
-        if (
-            target_major == 12
-            and "nvcc" in binaries
-            and matched_without_binaries
-            and all("nvcc" not in e["binaries"] for e in matched_without_binaries)
-        ):
-            raise RuntimeError(
-                "No CUDA 12 nvcc found. The nvidia-cuda-nvcc-cu12 PyPI package does not "
-                "ship the nvcc driver; please install the CUDA Toolkit "
-                "(e.g. `apt install cuda-toolkit-12-x` or "
-                "https://developer.nvidia.com/cuda-downloads)."
-            )
-        if target_major in (12, 13):
-            raise RuntimeError(
-                f"No suitable CUDA {target_major} environment found. "
-                f"Try: pip install humming-kernels[cu{target_major}]"
-            )
-        raise RuntimeError(f"No suitable CUDA {target_major} environment found.")
-    return results[0]
+    if results:
+        return results[0]
+
+    is_cu12_nvcc_missing = (
+        target_major == 12
+        and "nvcc" in binaries
+        and len(matched_without_binaries) > 0
+        and all("nvcc" not in e["binaries"] for e in matched_without_binaries)
+    )
+    if is_cu12_nvcc_missing:
+        raise RuntimeError(
+            "No CUDA 12 nvcc found. The nvidia-cuda-nvcc-cu12 PyPI package does not "
+            "ship the nvcc driver; please install the CUDA Toolkit "
+            "(e.g. `apt install cuda-toolkit-12-x` or "
+            "https://developer.nvidia.com/cuda-downloads)."
+        )
+    if target_major in (12, 13):
+        raise RuntimeError(
+            f"No suitable CUDA {target_major} environment found. "
+            f"Try: pip install humming-kernels[cu{target_major}]"
+        )
+    raise RuntimeError(f"No suitable CUDA {target_major} environment found.")
 
 
 @functools.lru_cache(maxsize=1)
