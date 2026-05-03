@@ -1,4 +1,5 @@
 import functools
+import glob
 import hashlib
 import importlib
 import os
@@ -128,6 +129,32 @@ def get_humming_lock_dir() -> str:
     dirname = os.path.join(tmp_dirname, "lock/")
     Path(dirname).mkdir(exist_ok=True, parents=True)
     return dirname
+
+
+def hash_path_content(path: str, releative: bool = False, text_only: bool = True) -> str:
+    data = {}
+
+    assert os.path.exists(path)
+    if os.path.isfile(path):
+        filename = path.split("/")[-1] if releative else path
+        with open(path, "rb") as f:
+            data[filename] = f.read()
+    else:
+        pattern = os.path.join(path, "**/*")
+        for fullname in sorted(glob.glob(pattern, recursive=True)):
+            filename = os.path.relpath(fullname, path) if releative else fullname
+            if not os.path.isfile(fullname):
+                continue
+            try:
+                with open(fullname, "r") as f:
+                    data[filename] = f.read()
+            except UnicodeDecodeError:
+                if text_only:
+                    continue
+                with open(fullname, "rb") as f:
+                    data[filename] = f.read()
+
+    return hash_to_hex(str(data))
 
 
 @functools.lru_cache(maxsize=1)

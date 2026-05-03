@@ -1,13 +1,14 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Callable
 
 import torch
 import torch.utils.cpp_extension
 from filelock import FileLock
 
-from humming.jit.utils import get_humming_lock_filename
+from humming.jit.utils import get_humming_cache_dir, get_humming_lock_filename, hash_path_content
 
 _libs = {}
 _launcher_inited = False
@@ -34,6 +35,26 @@ def register_op(
         _lib._register_fake(op_name, fake_impl_func)
 
 
+def get_humming_launcher_build_dir():
+    import humming
+
+    dirname = os.path.dirname(humming.__file__)
+    launcher_code_hash = hash_path_content(
+        path=os.path.join(dirname, "csrc/launcher/"),
+        releative=True,
+    )
+
+    cache_dir = get_humming_cache_dir()
+    py_version = f"py{sys.version_info.major}{sys.version_info.minor}"
+    torch_major, torch_minor = torch.__version__.split(".")[:2]
+    torch_version = f"torch{torch_major}{torch_minor}"
+    version = py_version + "_" + torch_version
+
+    launcher_build_dir = os.path.join(cache_dir, f"launcher/{version}/{launcher_code_hash}")
+    Path(launcher_build_dir).mkdir(exist_ok=True, parents=True)
+    return launcher_build_dir
+
+
 def init_humming_launcher():
     from packaging.version import Version
     from torch.library import register_fake
@@ -50,15 +71,21 @@ def init_humming_launcher():
     with FileLock(lock_filename):
         import humming
 
+        build_dir = get_humming_launcher_build_dir()
+        torch_lock_file = os.path.join(build_dir, "lock")
+        if os.path.exists(torch_lock_file):
+            os.unlink(torch_lock_file)
+
         dirname = os.path.dirname(humming.__file__)
         filename = os.path.join(dirname, "csrc/launcher/launcher.cpp")
 
         torch.utils.cpp_extension.load(
-            name="humming_extension",
+            name="humming_launcher",
             sources=[filename],
             extra_ldflags=["-lcuda", "-lc10_cuda", "-ltorch_cuda"],
             extra_cflags=["-O3", f"-DUSE_TORCH_STABLE_API={USE_TORCH_STABLE_API}"],
             with_cuda=True,
+            build_directory=build_dir,
         )
 
         _launcher_inited = True

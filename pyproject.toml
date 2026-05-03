@@ -19,6 +19,7 @@ dependencies = [
 
 [tool.setuptools]
 include-package-data = true
+packages = ["humming"]
 
 [tool.setuptools.package-data]
 "*" = ["*.cu", "*.cuh", "*.cpp", "*.h", ".hpp"]
