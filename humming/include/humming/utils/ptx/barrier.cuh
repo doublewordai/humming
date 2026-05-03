@@ -10,7 +10,7 @@ CUDA_INLINE uint32_t sync_part_threads() {
   } else {
     static_assert(kNumThreads >= kNumSyncThreads);
     static_assert(kNumSyncThreads > 0);
-    asm volatile("bar.sync %0, %1;":: "r"(kBarrierId), "r"(kNumSyncThreads));
+    asm volatile("bar.sync %0, %1;" ::"r"(kBarrierId), "r"(kNumSyncThreads));
   }
 }
 

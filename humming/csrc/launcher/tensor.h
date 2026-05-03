@@ -1,11 +1,11 @@
 #pragma once
 
-#include <cuda.h>
-#include "./torch_api.h"
 #include "./tma.h"
+#include "./torch_api.h"
 #include "./utils.h"
+#include <cuda.h>
 
-inline Tensor may_make_tensor_c(std::optional<Tensor> &c, const Tensor &a, KernelData& kernel_data, int64_t top_k) {
+inline Tensor may_make_tensor_c(std::optional<Tensor> &c, const Tensor &a, KernelData &kernel_data, int64_t top_k) {
   if (c.has_value()) return c.value();
 
   int64_t shape_m = a.size(0);
@@ -16,11 +16,11 @@ inline Tensor may_make_tensor_c(std::optional<Tensor> &c, const Tensor &a, Kerne
   return torch_empty({shape_m, shape_n}, c_dtype, a.device());
 }
 
-inline Tensor make_tensor_map_buffer(const Tensor &a, KernelData& kernel_data, uint32_t num_ctas) {
+inline Tensor make_tensor_map_buffer(const Tensor &a, KernelData &kernel_data, uint32_t num_ctas) {
   int64_t size = 0;
 
   if (kernel_data.use_tma_c && (kernel_data.gemm_type_id == 2 || kernel_data.gemm_type_id == 3)) {
-    size = 32;  // 32 int32 = 128 bytes
+    size = 32; // 32 int32 = 128 bytes
   }
 
   return torch_empty({size * num_ctas}, ScalarType::Int, a.device());

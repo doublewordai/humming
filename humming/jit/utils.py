@@ -138,7 +138,7 @@ def hash_path_content(path: str, releative: bool = False, text_only: bool = True
     if os.path.isfile(path):
         filename = path.split("/")[-1] if releative else path
         with open(path, "rb") as f:
-            data[filename] = f.read()
+            data[filename] = str(f.read())
     else:
         pattern = os.path.join(path, "**/*")
         for fullname in sorted(glob.glob(pattern, recursive=True)):
@@ -152,7 +152,7 @@ def hash_path_content(path: str, releative: bool = False, text_only: bool = True
                 if text_only:
                     continue
                 with open(fullname, "rb") as f:
-                    data[filename] = f.read()
+                    data[filename] = str(f.read())
 
     return hash_to_hex(str(data))
 

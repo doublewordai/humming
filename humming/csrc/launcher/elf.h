@@ -113,7 +113,7 @@ public:
       if (sym.st_shndx >= shdrs.size()) continue;
       std::string sName = &names[sym.st_name];
 
-      const auto& shdr = shdrs[sym.st_shndx];
+      const auto &shdr = shdrs[sym.st_shndx];
       if (shdr.sh_type == SHT_NOBITS) {
         symbolOffsets[sName] = 0;
       } else {

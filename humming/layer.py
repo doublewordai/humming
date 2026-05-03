@@ -334,11 +334,11 @@ class HummingLayerMethod:
         scale_min = weight_scale.min(1)[0].unsqueeze(-1)
         scale_range = scale_max - scale_min
         if meta.a_dtype == dtypes.int8:
-            max_range = 3
+            max_range_val = 3
         elif meta.a_dtype == dtypes.float8e4m3:
-            max_range = 12
+            max_range_val = 12
 
-        max_range = torch.tensor(max_range, dtype=torch.uint8, device=scale_range.device)
+        max_range = torch.tensor(max_range_val, dtype=torch.uint8, device=scale_range.device)
         scale_range = scale_range.minimum(max_range)
         scale_min_new = scale_max - scale_range
         delta_scale_offsets = weight_scale.maximum(scale_min_new) - weight_scale
@@ -461,6 +461,7 @@ class HummingLayerMethod:
         quanted_input: torch.Tensor | None = None,
         sublayer_name: str = "",
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        assert isinstance(layer.humming_metas, dict)
         meta = layer.humming_metas[sublayer_name]
         if meta.a_dtype.num_bits == 16:
             return inputs, None

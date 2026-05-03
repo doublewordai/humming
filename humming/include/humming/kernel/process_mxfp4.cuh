@@ -11,7 +11,7 @@ CUDA_INLINE float dequant_fp4_val(uint32_t val) {
   uint32_t other = (val & 0x7) << 22;
   uint32_t res = sign | other;
 
-  return *reinterpret_cast<float*>(&res);
+  return *reinterpret_cast<float *>(&res);
 };
 
 
@@ -47,7 +47,7 @@ __global__ void process_mxfp4_w4a8(uint4 *in_ptr, uint4 *out_ptr, uint8_t *delta
   uint32_t delta_scale_offset = delta_scale_offset_ptr[index];
   uint4 int4_val = in_ptr[index];
 
-  uint32_t* ints = reinterpret_cast<uint32_t*>(&int4_val);
+  uint32_t *ints = reinterpret_cast<uint32_t *>(&int4_val);
   uint32_t res[4] = {0, 0, 0, 0};
 
   PRAGMA_UNROLL
@@ -56,11 +56,11 @@ __global__ void process_mxfp4_w4a8(uint4 *in_ptr, uint4 *out_ptr, uint8_t *delta
     PRAGMA_UNROLL
     for (uint32_t k = 0; k < 8; k++) {
       uint32_t tmp_val = (val >> (k * 4)) & 0xF;
-      tmp_val = tmp_val == 8 ? 0 : tmp_val;  // 0b1000 is negative zero
+      tmp_val = tmp_val == 8 ? 0 : tmp_val; // 0b1000 is negative zero
       if (delta_scale_offset) {
         float float_val = dequant_fp4_val(tmp_val);
         uint32_t scale_factor_uint = 0x3F800000 - (delta_scale_offset << 23);
-        float scale_factor = *reinterpret_cast<float*>(&scale_factor_uint);
+        float scale_factor = *reinterpret_cast<float *>(&scale_factor_uint);
         float_val = float_val * scale_factor;
         tmp_val = quant_to_fp4_val(float_val);
       }
@@ -68,5 +68,5 @@ __global__ void process_mxfp4_w4a8(uint4 *in_ptr, uint4 *out_ptr, uint8_t *delta
     }
   }
 
-  out_ptr[index] = *reinterpret_cast<uint4*>(res);
+  out_ptr[index] = *reinterpret_cast<uint4 *>(res);
 }

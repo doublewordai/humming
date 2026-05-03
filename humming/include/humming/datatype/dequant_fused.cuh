@@ -12,7 +12,7 @@ CUDA_INLINE uint2 fused_dequant_single_for_mxfp4(const uint32_t qb, const uint32
 }
 
 
-template<>
+template <>
 CUDA_INLINE uint2 fused_dequant_single_for_mxfp4<Float8E4M3>(const uint32_t qb, const uint32_t exp_offset) {
   uint32_t qb_org = qb;
   uint32_t qb_ls4 = qb << 4;
@@ -26,9 +26,8 @@ CUDA_INLINE uint2 fused_dequant_single_for_mxfp4<Float8E4M3>(const uint32_t qb, 
   uint32_t exp_offset_buffer2 = exp_offset * 0x08080808;
 
   uint32_t exp_offsets[2] = {
-    __byte_perm(exp_offset_buffer1, exp_offset_buffer2, qb),
-    __byte_perm(exp_offset_buffer1, exp_offset_buffer2, qb >> 16)
-  };
+      __byte_perm(exp_offset_buffer1, exp_offset_buffer2, qb),
+      __byte_perm(exp_offset_buffer1, exp_offset_buffer2, qb >> 16)};
 
   PRAGMA_UNROLL
   for (uint32_t i = 0; i < 2; i++) {
@@ -37,11 +36,11 @@ CUDA_INLINE uint2 fused_dequant_single_for_mxfp4<Float8E4M3>(const uint32_t qb, 
     res[i] = val;
   }
 
-  return *reinterpret_cast<uint2*>(res);
+  return *reinterpret_cast<uint2 *>(res);
 }
 
 
-template<>
+template <>
 CUDA_INLINE uint2 fused_dequant_single_for_mxfp4<Int8>(const uint32_t qb, const uint32_t exp_offset) {
   uint32_t buffer1 = 0x03020100 << exp_offset;
   uint32_t buffer2 = 0x0C080604 << exp_offset;
@@ -49,9 +48,8 @@ CUDA_INLINE uint2 fused_dequant_single_for_mxfp4<Int8>(const uint32_t qb, const 
   uint32_t res[2];
   uint32_t raws[2] = {qb, qb >> 4};
   uint32_t int8s[2] = {
-    __byte_perm(buffer1, buffer2, qb),
-    __byte_perm(buffer1, buffer2, qb >> 16)
-  };
+      __byte_perm(buffer1, buffer2, qb),
+      __byte_perm(buffer1, buffer2, qb >> 16)};
 
   PRAGMA_UNROLL
   for (uint32_t i = 0; i < 2; i++) {
@@ -68,14 +66,14 @@ CUDA_INLINE uint2 fused_dequant_single_for_mxfp4<Int8>(const uint32_t qb, const 
     res[i] = val;
   }
 
-  return *reinterpret_cast<uint2*>(res);
+  return *reinterpret_cast<uint2 *>(res);
 }
 
 template <class TargetType, uint32_t kCount, bool kUseWgmma>
 CUDA_INLINE void fused_dequant_for_mxfp4(const uint32_t *qb_ptrs, uint32_t *res_ptrs, uint32_t *scales_ptr) {
   PRAGMA_UNROLL
   for (uint32_t i = 0; i < kCount * 2; i++) {
-    uint32_t exp_offset = reinterpret_cast<uint8_t*>(scales_ptr)[i];
+    uint32_t exp_offset = reinterpret_cast<uint8_t *>(scales_ptr)[i];
     uint2 res = fused_dequant_single_for_mxfp4<TargetType>(qb_ptrs[i], exp_offset);
     res_ptrs[i * 2] = res.x;
     res_ptrs[i * 2 + 1] = res.y;

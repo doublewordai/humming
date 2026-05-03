@@ -77,7 +77,7 @@ Tensor launch_kernel(
     bool should_check_tensor = true) {
 
   KernelLaunchData base_kernel_launch_data = find_kernel_launch_data(configs, 1);
-  KernelData& base_kernel_data = base_kernel_launch_data.kernel_data;
+  KernelData &base_kernel_data = base_kernel_launch_data.kernel_data;
 
   int64_t dev = a.get_device();
   int64_t shape_m = a.size(0);
@@ -86,7 +86,7 @@ Tensor launch_kernel(
     valid_shape_m = shape_m * (base_kernel_data.gemm_type_id == 1 ? top_k : 1);
   }
   KernelLaunchData kernel_launch_data = find_kernel_launch_data(configs, valid_shape_m);
-  KernelData& kernel_data = kernel_launch_data.kernel_data;
+  KernelData &kernel_data = kernel_launch_data.kernel_data;
   int64_t &num_sms = kernel_launch_data.num_sms;
   Tensor c = may_make_tensor_c(c_, a, kernel_data, top_k);
   uint32_t num_ctas = kernel_data.num_ctas_per_sm * get_num_sms(num_sms, dev);
@@ -160,7 +160,7 @@ Tensor launch_kernel(
   config.blockDimY = 1;
   config.blockDimZ = 1;
 
-  CUlaunchAttribute attrs[1]; 
+  CUlaunchAttribute attrs[1];
   if (kernel_data.multi_cast_size_a * kernel_data.multi_cast_size_b > 1) {
     attrs[0].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
     attrs[0].value.clusterDim.x = kernel_data.multi_cast_size_a * kernel_data.multi_cast_size_b;

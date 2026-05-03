@@ -7,8 +7,8 @@
 #if USE_TORCH_STABLE_API
 
 #include <torch/csrc/stable/library.h>
-#include <torch/csrc/stable/tensor_inl.h>
 #include <torch/csrc/stable/ops.h>
+#include <torch/csrc/stable/tensor_inl.h>
 
 using Tensor = torch::stable::Tensor;
 using IntArrayRef = torch::headeronly::IntHeaderOnlyArrayRef;
@@ -21,17 +21,23 @@ using Device = torch::stable::Device;
 #define COMMON_TORCH_BOX TORCH_BOX
 #define DTYPE_TO_STRING torch::headeronly::toString
 
-inline Tensor torch_empty(IntArrayRef shape, ScalarType dtype, Device device) { return torch::stable::empty(shape, dtype, std::nullopt, device, std::nullopt, std::nullopt); };
-inline Tensor torch_view_shape(const Tensor tensor, IntArrayRef shape) { return torch::stable::view(tensor, shape); };
-inline Tensor torch_contiguous(const Tensor tensor) { return torch::stable::contiguous(tensor); };
+inline Tensor torch_empty(IntArrayRef shape, ScalarType dtype, Device device) {
+  return torch::stable::empty(shape, dtype, std::nullopt, device, std::nullopt, std::nullopt);
+};
+inline Tensor torch_view_shape(const Tensor tensor, IntArrayRef shape) {
+  return torch::stable::view(tensor, shape);
+};
+inline Tensor torch_contiguous(const Tensor tensor) {
+  return torch::stable::contiguous(tensor);
+};
 
 #else
 
+#include <ATen/EmptyTensor.h>
 #include <ATen/core/Tensor.h>
+#include <ATen/ops/empty.h>
 #include <c10/cuda/CUDAStream.h>
 #include <torch/library.h>
-#include <ATen/ops/empty.h>
-#include <ATen/EmptyTensor.h>
 
 using Tensor = at::Tensor;
 using IntArrayRef = at::IntArrayRef;
@@ -44,8 +50,14 @@ using Device = at::Device;
 #define COMMON_TORCH_BOX
 #define DTYPE_TO_STRING at::toString
 
-inline Tensor torch_empty(IntArrayRef shape, ScalarType dtype, Device device) { return at::empty(shape, dtype, std::nullopt, device, std::nullopt, std::nullopt); };
-inline Tensor torch_view_shape(const Tensor tensor, IntArrayRef shape) { return tensor.view(shape); };
-inline Tensor torch_contiguous(const Tensor tensor) { return tensor.contiguous(); };
+inline Tensor torch_empty(IntArrayRef shape, ScalarType dtype, Device device) {
+  return at::empty(shape, dtype, std::nullopt, device, std::nullopt, std::nullopt);
+};
+inline Tensor torch_view_shape(const Tensor tensor, IntArrayRef shape) {
+  return tensor.view(shape);
+};
+inline Tensor torch_contiguous(const Tensor tensor) {
+  return tensor.contiguous();
+};
 
 #endif

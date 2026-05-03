@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cuda.h>
 #include "./torch_api.h"
+#include <cuda.h>
 
 inline CUtensorMapDataType get_tma_dtype(ScalarType type) {
   switch (type) {
