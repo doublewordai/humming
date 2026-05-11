@@ -127,7 +127,7 @@ if not TYPE_CHECKING:
     process_mxfp4_w4a8_weight = torch.ops.humming.process_mxfp4_w4a8_weight
     unpack_weight = torch.ops.humming.unpack_weight
     humming_gemm = torch.ops.humming.humming_gemm
-    fused_moe_mul_sum = torch.ops.humming.fused_moe_mul_sum
+    moe_fused_mul_sum = torch.ops.humming.moe_fused_mul_sum
 
 
 __all__ = [
