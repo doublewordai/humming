@@ -213,6 +213,13 @@ def prepare_humming_weight(
     if a_dtype == dtypes.int8 and b_dtype in [dtypes.int8, dtypes.uint8]:
         weight = (weight.view(torch.int8) - 128).view(torch.int32)
 
+    if a_dtype == dtypes.int4 and b_dtype in [dtypes.int4, dtypes.uint4]:
+        weight = weight.view(torch.uint8)
+        weight1 = (weight & 0xF) - 8
+        weight1 = weight1 & 0xF
+        weight2 = (weight & 0xF0) - 8 * 16
+        weight = (weight1 | weight2).view(torch.int32)
+
     if not should_preprocess_for_int2fp and has_zero_point:
         has_zero_point = False
 
@@ -275,6 +282,7 @@ def prepare_humming_zero_point(
     dtype: dtypes.DataType,
     packed: bool = False,
 ) -> torch.Tensor | None:
+    num_experts = None if zero_point.ndim == 2 else zero_point.size(0)
     if zero_point.dtype.is_floating_point:
         return prepare_humming_weight_scale(zero_point, False)
 
@@ -293,7 +301,10 @@ def prepare_humming_zero_point(
     zero_point = zero_point.view(-1)
     if num_zp_bits == 4:
         zero_point = zero_point[..., 1::2] * 16 + zero_point[..., ::2]
-    return zero_point.view(torch.int32).view(-1, shape_n * num_zp_bits // 32)
+    zero_point = zero_point.view(torch.int32).view(-1, shape_n * num_zp_bits // 32)
+    if num_experts is not None:
+        zero_point = zero_point.view(num_experts, -1, zero_point.size(-1))
+    return zero_point
 
 
 def prepare_humming_bias(bias: torch.Tensor) -> torch.Tensor:

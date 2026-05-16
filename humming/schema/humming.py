@@ -74,7 +74,12 @@ class HummingWeightSchema(BaseWeightSchema):
             "weight": {
                 "shape": (shape_n, shape_k * num_bits // 32),
                 "dtype": torch.int32,
-                "extra_attrs": {"input_dim": 1, "output_dim": 0},
+                "extra_attrs": {
+                    "input_dim": 1,
+                    "output_dim": 0,
+                    "packed_factor": 32 / num_bits,
+                    "packed_dim": 1,
+                },
             }
         }
 
@@ -102,7 +107,12 @@ class HummingWeightSchema(BaseWeightSchema):
             tensor_meta["zero_point"] = {
                 "shape": (shape_n * num_bits // 32, shape_k // group_size),
                 "dtype": torch.int32,
-                "extra_attrs": {"input_dim": 1, "output_dim": 0},
+                "extra_attrs": {
+                    "input_dim": 1,
+                    "output_dim": 0,
+                    "packed_factor": 32 / num_bits,
+                    "packed_dim": 0,
+                },
             }
 
         if self.has_zero_point and self.is_fp_zero_point:

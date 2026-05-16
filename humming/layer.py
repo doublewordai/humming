@@ -475,7 +475,60 @@ class HummingLayerMethod:
             dtype=str(meta.a_dtype),
             group_size=None,
         )
-        return quanted_input, (input_scale if input_scale.numel() else None)
+        return quanted_input, input_scale
+
+    @classmethod
+    def may_hadamard_quant_input(
+        cls,
+        layer: HummingModule | torch.nn.Module,
+        inputs: torch.Tensor,
+        hadamard_block_size: int | None = None,
+        input_scale: torch.Tensor | None = None,
+        quanted_input: torch.Tensor | None = None,
+        sublayer_name: str = "",
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Optionally apply a fast Hadamard rotation, then optionally quantize.
+
+        Args:
+            hadamard_block_size: if None, skip rotation; otherwise apply FHT with
+                this block size along the last dim.
+            input_scale: if provided, treat ``inputs`` as already quantized and
+                pass through (matches ``may_quant_input`` semantics).
+        """
+        assert isinstance(layer.humming_metas, dict)
+        meta = layer.humming_metas[sublayer_name]
+        should_rotate = hadamard_block_size is not None
+        should_quant = meta.a_dtype.num_bits != 16
+
+        # Pre-quantized input was passed in — assume already rotated upstream.
+        if input_scale is not None:
+            return inputs, input_scale
+
+        # Case 1: neither rotate nor quant.
+        if not should_rotate and not should_quant:
+            return inputs, None
+
+        # Case 2: rotate only. quanted_input (if provided) is reused as output
+        # since it shares inputs' dtype/shape when no quantization happens.
+        if should_rotate and not should_quant:
+            outputs = ops.hadamard_transform(
+                inputs=inputs,
+                block_size=hadamard_block_size,
+                outputs=quanted_input,
+            )
+            return outputs, None
+
+        # Cases 3 (quant only) and 4 (fused rotate + quant) collapse into a
+        # single call: block_size=1 disables the FHT (identity), so this also
+        # covers the pure-quant path.
+        quanted_input, input_scale = ops.hadamard_quant_input(
+            inputs=inputs,
+            block_size=hadamard_block_size if should_rotate else 1,
+            quant_dtype=str(meta.a_dtype),
+            group_size=meta.input_scale_group_size,
+            outputs=quanted_input,
+        )
+        return quanted_input, input_scale
 
     @classmethod
     def forward_layer(
@@ -493,12 +546,14 @@ class HummingLayerMethod:
         compute_config: dict | str | None = None,
         tuning_config: dict | list | str | None = None,
         sublayer_name: str = "",
+        hadamard_block_size: int | None = None,
     ):
         assert isinstance(layer.humming_metas, dict)
         meta = layer.humming_metas[sublayer_name]
-        inputs, input_scale = cls.may_quant_input(
+        inputs, input_scale = cls.may_hadamard_quant_input(
             layer=layer,
             inputs=inputs,
+            hadamard_block_size=hadamard_block_size,
             input_scale=input_scale,
             sublayer_name=sublayer_name,
         )
@@ -805,6 +860,7 @@ class HummingLayer(HummingModule):
         top_k: int = 1,
         compute_config: dict | str | None = None,
         tuning_config: dict | list | str | None = None,
+        hadamard_block_size: int | None = None,
     ) -> torch.Tensor:
         return HummingLayerMethod.forward_layer(
             layer=self,
@@ -818,4 +874,5 @@ class HummingLayer(HummingModule):
             top_k=top_k,
             compute_config=compute_config,
             tuning_config=tuning_config,
+            hadamard_block_size=hadamard_block_size,
         )

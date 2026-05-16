@@ -76,7 +76,6 @@ def bench_humming(
             inputs, input_scale = ops.quant_input(
                 inputs,
                 a_dtype,
-                None,
                 group_size=input_scale_group_size,
             )
 
