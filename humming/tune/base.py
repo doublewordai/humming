@@ -179,6 +179,11 @@ class DeviceHeuristics:
                 warp_shape_m = math.ceil(warp_shape_m / 16) * 16
                 block_shape_m = num_warps_m * warp_shape_m
 
+        while meta.shape_k % block_shape_k != 0:
+            block_shape_k = block_shape_k // 2
+            warp_shape_k = 512 // meta.a_dtype.num_bits
+            assert block_shape_k >= warp_shape_k
+
         if num_ctas_per_sm == 1:
             factor = min(4.5, meta.shape_n / (3 * block_shape_n))
             num_sms = min(num_sms, math.ceil(num_blocks_n * num_blocks_m * factor))
