@@ -93,7 +93,9 @@ def hadamard_quant_input(
     """
     assert inputs.is_cuda and inputs.is_contiguous()
     assert inputs.dtype in (torch.float16, torch.bfloat16, torch.float32)
-    assert block_size >= 1 and (block_size & (block_size - 1)) == 0
+    assert block_size >= 2 and (block_size & (block_size - 1)) == 0, (
+        "block_size must be a power of 2 >= 2; for no-rotation quant use ops.quant_input"
+    )
     assert inputs.size(-1) % block_size == 0
     if group_size is None or group_size == 0:
         group_size = inputs.size(-1)

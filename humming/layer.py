@@ -518,12 +518,20 @@ class HummingLayerMethod:
             )
             return outputs, None
 
-        # Cases 3 (quant only) and 4 (fused rotate + quant) collapse into a
-        # single call: block_size=1 disables the FHT (identity), so this also
-        # covers the pure-quant path.
+        # Case 3: quant only — no FHT.
+        if not should_rotate:
+            quanted_input, input_scale = ops.quant_input(
+                inputs=inputs,
+                dtype=str(meta.a_dtype),
+                outputs=quanted_input,
+                group_size=meta.input_scale_group_size,
+            )
+            return quanted_input, input_scale
+
+        # Case 4: fused rotate + quant.
         quanted_input, input_scale = ops.hadamard_quant_input(
             inputs=inputs,
-            block_size=hadamard_block_size if should_rotate else 1,
+            block_size=hadamard_block_size,
             quant_dtype=str(meta.a_dtype),
             group_size=meta.input_scale_group_size,
             outputs=quanted_input,

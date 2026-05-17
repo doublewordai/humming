@@ -5,6 +5,7 @@ import torch
 from humming.kernel.humming import HummingKernel
 from humming.ops.bench import tops_bench  # noqa
 from humming.ops.hadamard import hadamard_quant_input, hadamard_transform
+from humming.ops.input import quant_input
 from humming.ops.moe import moe_fused_mul_sum
 from humming.ops.utils import init_humming_launcher, register_op
 from humming.ops.weight import (
@@ -15,25 +16,6 @@ from humming.ops.weight import (
     repack_weight,
     unpack_weight,
 )
-
-
-def quant_input(
-    inputs: torch.Tensor,
-    dtype: str,
-    outputs: torch.Tensor | None = None,
-    scales: torch.Tensor | None = None,
-    group_size: int | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    last_dim = inputs.size(-1)
-    g = last_dim if (group_size is None or group_size == 0) else group_size
-    return hadamard_quant_input(
-        inputs=inputs,
-        block_size=1,
-        quant_dtype=dtype,
-        group_size=g,
-        outputs=outputs,
-        scales=scales,
-    )
 
 
 def register_kernel(cubin_path: str, func_name: str) -> int:

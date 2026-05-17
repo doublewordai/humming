@@ -46,8 +46,6 @@ __global__ void hadamard_quant_input_wide(
 
   constexpr uint32_t E_lane = kBlockSize / kThreadsPerTile;
   static_assert((E_lane & (E_lane - 1)) == 0);
-  // E_lane == 1 collapses the FHT to identity (no register/shuffle stages),
-  // giving a pure per-group quantization fallback.
 
   constexpr uint32_t kTilesPerGroup = kGroupSize / kBlockSize;
   static_assert(kTilesPerGroup % kTilesPerThread == 0);
@@ -325,104 +323,48 @@ __global__ void hadamard_quant_input_wide(
       }
     }
   } else if constexpr (kBits == 4) {
-    // For E_lane >= 2: pair within each tile, then write per-tile.
-    // For E_lane == 1 (N == 1): pair across consecutive tiles in the thread.
+    // Pair adjacent elements within each tile, then write per-tile.
+    static_assert(E_lane >= 2 && E_lane % 2 == 0);
     constexpr bool kIsFp4 = std::is_same<TargetType, Float4E2M1>::value;
-    if constexpr (E_lane >= 2) {
-      static_assert(E_lane % 2 == 0);
-      uint8_t bytes[kElemsPerThread / 2];
+    uint8_t bytes[kElemsPerThread / 2];
+    PRAGMA_UNROLL
+    for (uint32_t m = 0; m < kTilesPerThread; m++) {
       PRAGMA_UNROLL
-      for (uint32_t m = 0; m < kTilesPerThread; m++) {
-        PRAGMA_UNROLL
-        for (uint32_t i = 0; i < E_lane / 2; i++) {
-          if constexpr (kIsFp4) {
-            bytes[m * (E_lane / 2) + i] = quant_pair_fp4<TargetType>(
-                reg[m * E_lane + 2 * i] * inv_scale,
-                reg[m * E_lane + 2 * i + 1] * inv_scale);
-          } else {
-            uint32_t a = quant_one_value<TargetType>(
-                reg[m * E_lane + 2 * i], inv_scale) & 0xFu;
-            uint32_t b = quant_one_value<TargetType>(
-                reg[m * E_lane + 2 * i + 1], inv_scale) & 0xFu;
-            bytes[m * (E_lane / 2) + i] = static_cast<uint8_t>(a | (b << 4));
-          }
-        }
-      }
-      uint8_t *gptr = reinterpret_cast<uint8_t *>(out_ptr)
-                      + (group_idx * kGroupSize
-                         + tile_slot * kTilesPerThread * kBlockSize) / 2
-                      + lane_in_tile * (E_lane / 2);
-      PRAGMA_UNROLL
-      for (uint32_t m = 0; m < kTilesPerThread; m++) {
-        uint8_t *p = gptr + m * (kBlockSize / 2);
-        if constexpr (E_lane / 2 == 8) {
-          uint2 packed;
-          packed.x = *reinterpret_cast<uint32_t *>(&bytes[m * (E_lane / 2) + 0]);
-          packed.y = *reinterpret_cast<uint32_t *>(&bytes[m * (E_lane / 2) + 4]);
-          *reinterpret_cast<uint2 *>(p) = packed;
-        } else if constexpr (E_lane / 2 == 4) {
-          *reinterpret_cast<uint32_t *>(p) =
-              *reinterpret_cast<uint32_t *>(&bytes[m * (E_lane / 2)]);
-        } else if constexpr (E_lane / 2 == 2) {
-          *reinterpret_cast<uint16_t *>(p) =
-              *reinterpret_cast<uint16_t *>(&bytes[m * (E_lane / 2)]);
-        } else if constexpr (E_lane / 2 == 1) {
-          p[0] = bytes[m];
-        } else {
-          PRAGMA_UNROLL
-          for (uint32_t i = 0; i < E_lane / 2; i++) p[i] = bytes[m * (E_lane / 2) + i];
-        }
-      }
-    } else if constexpr (kTilesPerThread >= 2) {
-      // E_lane == 1, kTilesPerThread >= 2: pair adjacent tiles within this
-      // thread (consecutive in the group's output stream).
-      static_assert(kTilesPerThread % 2 == 0);
-      uint8_t bytes[kTilesPerThread / 2];
-      PRAGMA_UNROLL
-      for (uint32_t i = 0; i < kTilesPerThread / 2; i++) {
+      for (uint32_t i = 0; i < E_lane / 2; i++) {
         if constexpr (kIsFp4) {
-          bytes[i] = quant_pair_fp4<TargetType>(
-              reg[2 * i] * inv_scale, reg[2 * i + 1] * inv_scale);
+          bytes[m * (E_lane / 2) + i] = quant_pair_fp4<TargetType>(
+              reg[m * E_lane + 2 * i] * inv_scale,
+              reg[m * E_lane + 2 * i + 1] * inv_scale);
         } else {
-          uint32_t a = quant_one_value<TargetType>(reg[2 * i], inv_scale) & 0xFu;
-          uint32_t b = quant_one_value<TargetType>(reg[2 * i + 1], inv_scale) & 0xFu;
-          bytes[i] = static_cast<uint8_t>(a | (b << 4));
+          uint32_t a = quant_one_value<TargetType>(
+              reg[m * E_lane + 2 * i], inv_scale) & 0xFu;
+          uint32_t b = quant_one_value<TargetType>(
+              reg[m * E_lane + 2 * i + 1], inv_scale) & 0xFu;
+          bytes[m * (E_lane / 2) + i] = static_cast<uint8_t>(a | (b << 4));
         }
       }
-      uint8_t *gptr = reinterpret_cast<uint8_t *>(out_ptr)
-                      + group_idx * (kGroupSize / 2)
-                      + tile_slot * (kTilesPerThread / 2);
-      if constexpr (kTilesPerThread / 2 == 8) {
+    }
+    uint8_t *gptr = reinterpret_cast<uint8_t *>(out_ptr)
+                    + (group_idx * kGroupSize
+                       + tile_slot * kTilesPerThread * kBlockSize) / 2
+                    + lane_in_tile * (E_lane / 2);
+    PRAGMA_UNROLL
+    for (uint32_t m = 0; m < kTilesPerThread; m++) {
+      uint8_t *p = gptr + m * (kBlockSize / 2);
+      if constexpr (E_lane / 2 == 8) {
         uint2 packed;
-        packed.x = *reinterpret_cast<uint32_t *>(&bytes[0]);
-        packed.y = *reinterpret_cast<uint32_t *>(&bytes[4]);
-        *reinterpret_cast<uint2 *>(gptr) = packed;
-      } else if constexpr (kTilesPerThread / 2 == 4) {
-        *reinterpret_cast<uint32_t *>(gptr) = *reinterpret_cast<uint32_t *>(&bytes[0]);
-      } else if constexpr (kTilesPerThread / 2 == 2) {
-        *reinterpret_cast<uint16_t *>(gptr) = *reinterpret_cast<uint16_t *>(&bytes[0]);
+        packed.x = *reinterpret_cast<uint32_t *>(&bytes[m * (E_lane / 2) + 0]);
+        packed.y = *reinterpret_cast<uint32_t *>(&bytes[m * (E_lane / 2) + 4]);
+        *reinterpret_cast<uint2 *>(p) = packed;
+      } else if constexpr (E_lane / 2 == 4) {
+        *reinterpret_cast<uint32_t *>(p) =
+            *reinterpret_cast<uint32_t *>(&bytes[m * (E_lane / 2)]);
+      } else if constexpr (E_lane / 2 == 2) {
+        *reinterpret_cast<uint16_t *>(p) =
+            *reinterpret_cast<uint16_t *>(&bytes[m * (E_lane / 2)]);
       } else {
-        PRAGMA_UNROLL
-        for (uint32_t i = 0; i < kTilesPerThread / 2; i++) gptr[i] = bytes[i];
-      }
-    } else {
-      // E_lane == 1 && kTilesPerThread == 1: only 1 nibble per thread. Pair
-      // with the neighbouring thread via shfl_xor. Even-indexed thread does
-      // the write.
-      static_assert(kThreadsPerBlock >= 32 && kThreadsPerBlock % 2 == 0);
-      uint32_t my_nibble;
-      if constexpr (kIsFp4) {
-        my_nibble = quant_pair_fp4<TargetType>(reg[0] * inv_scale, 0.f) & 0xFu;
-      } else {
-        my_nibble = quant_one_value<TargetType>(reg[0], inv_scale) & 0xFu;
-      }
-      uint32_t other = __shfl_xor_sync(0xffffffff, my_nibble, 1, 32);
-      if ((tile_slot & 1u) == 0) {
-        uint8_t byte = static_cast<uint8_t>(my_nibble | (other << 4));
-        uint8_t *gptr = reinterpret_cast<uint8_t *>(out_ptr)
-                        + group_idx * (kGroupSize / 2)
-                        + tile_slot / 2;
-        *gptr = byte;
+        static_assert(E_lane / 2 == 1);
+        p[0] = bytes[m];
       }
     }
   } else {
