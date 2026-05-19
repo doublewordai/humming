@@ -192,6 +192,7 @@ class DeviceHeuristics:
             "num_stages": num_stages,
             "num_ctas_per_sm": num_ctas_per_sm,
             "num_write_splits": num_write_splits,
+            "use_pdl": block_shape_m <= 32 and cls.sm_version >= 90,
         }
 
     @classmethod

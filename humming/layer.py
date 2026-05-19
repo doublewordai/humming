@@ -462,6 +462,7 @@ class HummingLayerMethod:
         input_scale: torch.Tensor | None = None,
         quanted_input: torch.Tensor | None = None,
         sublayer_name: str = "",
+        use_pdl: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         assert isinstance(layer.humming_metas, dict)
         meta = layer.humming_metas[sublayer_name]
@@ -474,6 +475,7 @@ class HummingLayerMethod:
             outputs=quanted_input,
             dtype=str(meta.a_dtype),
             group_size=None,
+            use_pdl=use_pdl,
         )
         return quanted_input, (input_scale if input_scale.numel() else None)
 

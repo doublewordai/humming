@@ -205,6 +205,57 @@ public:
     }
   }
 
+  CUDA_INLINE void load_first_stage_pdl_weights() {
+    uint64_t *mbar_ptr = nullptr;
+    if constexpr (kUseMBarrier) mbar_ptr = &smem.load_mbar[kNumStages];
+    loader_b.template load<false>(smem.b[0], mbar_ptr);
+    if constexpr (kIsGroupWeightScale || kIsBlockWeightScale) {
+      loader_bs.template load<false>(smem.bs[0], mbar_ptr);
+    }
+    if constexpr (kHasZeroPoint) {
+      loader_bzp.template load<false>(smem.bzp[0], mbar_ptr);
+    }
+  }
+
+  CUDA_INLINE void load_first_stage_pdl_inputs(bool pred = true) {
+    uint64_t *mbar_ptr = nullptr;
+    if constexpr (kUseMBarrier) mbar_ptr = &smem.load_mbar[kNumStages];
+    uint2 load_bytes;
+    if (pred) {
+      loader_a.template load<true>(smem.a[0], mbar_ptr);
+      loader_b.advance();
+      if constexpr (kIsGroupInputScale) {
+        loader_as.template load<true>(smem.as[0], mbar_ptr);
+      }
+      if constexpr (kIsGroupWeightScale || kIsBlockWeightScale) {
+        loader_bs.advance();
+      }
+      if constexpr (kHasZeroPoint) {
+        loader_bzp.advance();
+      }
+      load_bytes = get_stage_load_bytes<true>();
+    }
+    commit_load<kHasFirstStageCpAsyncMBarrier, kHasFirstStageTmaMBarrier>(kNumStages, load_bytes, pred);
+  }
+
+  CUDA_INLINE void load_channel_pdl_weights() {
+    uint64_t *channel_mbar_ptr = nullptr;
+    if constexpr (kUseMBarrier) channel_mbar_ptr = &smem.load_mbar[kNumStages + 1];
+    if constexpr (kIsChannelWeightScale) loader_bs.load(smem.bs_c, channel_mbar_ptr);
+    if constexpr (kHasBias) loader_bias.load(smem.bias, channel_mbar_ptr);
+  }
+
+  CUDA_INLINE void load_channel_pdl_inputs() {
+    uint64_t *channel_mbar_ptr = nullptr;
+    if constexpr (kUseMBarrier) channel_mbar_ptr = &smem.load_mbar[kNumStages + 1];
+    if constexpr (kIsChannelInputScale) loader_as.load(smem.as_c, channel_mbar_ptr);
+
+    constexpr uint2 load_bytes = get_channel_load_bytes();
+    if constexpr (load_bytes.x > 0 || load_bytes.y > 0) {
+      commit_load<kHasChannelCpAsyncMBarrier, kHasChannelTmaMBarrier>(kNumStages + 1, load_bytes);
+    }
+  }
+
   CUDA_INLINE void load_channel() {
     uint64_t *channel_mbar_ptr = nullptr;
     if constexpr (kUseMBarrier) channel_mbar_ptr = &smem.load_mbar[kNumStages + 1];

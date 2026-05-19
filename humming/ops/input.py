@@ -5,6 +5,18 @@ from torch._subclasses.fake_tensor import FakeTensor
 
 
 @triton.jit
+def gdc_launch_dependents():
+    tl.inline_asm_elementwise(
+        asm="griddepcontrol.launch_dependents;",
+        constraints="=r",
+        args=[],
+        dtype=tl.int32,
+        is_pure=False,
+        pack=1,
+    )
+
+
+@triton.jit
 def calc_scale(tensor, dtype):
     if dtype == "float8e4m3":
         absmax = tl.maximum(tl.max(tl.abs(tensor)), 1e-30)
@@ -98,7 +110,10 @@ def _quant_tensor_kernel(
     BLOCK: tl.constexpr,
     GROUPS_PER_BLOCK: tl.constexpr,
     dtype: tl.constexpr,
+    USE_PDL: tl.constexpr = False,
 ):
+    if USE_PDL:
+        gdc_launch_dependents()
     block_id = tl.program_id(0).to(tl.int64)
     tl.static_assert(N % GROUP_SIZE == 0)
 
@@ -154,6 +169,7 @@ def quant_input(
     scales: torch.Tensor | None = None,
     outputs: torch.Tensor | None = None,
     group_size: int | None = None,
+    use_pdl: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if dtype in ["int4", "float4e2m1"]:
         output_shape = (*inputs.shape[:-1], inputs.size(-1) // 2)
@@ -205,6 +221,7 @@ def quant_input(
         num_warps = min(max(effective_block // 256, 1), 8)
         num_stages = 1
 
+        effective_use_pdl = use_pdl and torch.cuda.get_device_capability(inputs.device)[0] >= 9
         _quant_tensor_kernel[(grid_blocks,)](
             inputs,
             outputs,
@@ -217,6 +234,7 @@ def quant_input(
             BLOCK,
             groups_per_block,
             dtype,
+            USE_PDL=effective_use_pdl,
             num_warps=num_warps,
             num_stages=num_stages,
         )

@@ -48,6 +48,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
 
   constexpr uint32_t kNumThreads = TuningConfig::kNumThreads;
   constexpr uint32_t kNumStages = TuningConfig::kNumStages;
+  constexpr bool kUsePdl = TuningConfig::kUsePdl;
 
   using SharedStorage = SharedStorage<
       MmaOpClass, BlockShape, WarpShape, ElementA, ElementB, ElementBS,
@@ -98,6 +99,9 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
   producer.init_mbarrier();
   __syncthreads();
 
+  if constexpr (kUsePdl) griddepcontrol_launch_dependents();
+
+  bool is_first_block = true;
   while (scheduler.get_next_block()) {
     mma.zero_accum();
     __syncthreads();
@@ -108,7 +112,18 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     epilogue.set_streamk_state(scheduler.slice_count, scheduler.slice_id, scheduler.locks_offset);
 
     if constexpr (TuningConfig::kUseTmaC) tma_wait_store_group<0, true>();
-    producer.template load_stage<true, true>(0);
+    if constexpr (kUsePdl) {
+      if (is_first_block) {
+        producer.load_first_stage_pdl_weights();
+        griddepcontrol_wait();
+        producer.load_first_stage_pdl_inputs();
+      } else {
+        producer.template load_stage<true, true>(0);
+      }
+    } else {
+      producer.template load_stage<true, true>(0);
+    }
+    is_first_block = false;
     PRAGMA_UNROLL
     for (uint32_t stage_id = 1; stage_id < MAX(kNumStages - 1, 2); stage_id++) {
       producer.load_stage(stage_id, stage_id < slice_iters);
