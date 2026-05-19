@@ -17,6 +17,18 @@ def gdc_launch_dependents():
 
 
 @triton.jit
+def gdc_wait():
+    tl.inline_asm_elementwise(
+        asm="griddepcontrol.wait;",
+        constraints="=r",
+        args=[],
+        dtype=tl.int32,
+        is_pure=False,
+        pack=1,
+    )
+
+
+@triton.jit
 def calc_scale(tensor, dtype):
     if dtype == "float8e4m3":
         absmax = tl.maximum(tl.max(tl.abs(tensor)), 1e-30)
@@ -114,6 +126,7 @@ def _quant_tensor_kernel(
 ):
     if USE_PDL:
         gdc_launch_dependents()
+        gdc_wait()
     block_id = tl.program_id(0).to(tl.int64)
     tl.static_assert(N % GROUP_SIZE == 0)
 
