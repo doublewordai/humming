@@ -122,6 +122,17 @@ public:
   static constexpr uint32_t kChannelSizeBZP = (kIsChannelWeightScale && kHasZeroPoint) ? kSmemStrideBZP : 0;
   static constexpr uint32_t kBiasSize = LayerConfig::kHasBias ? kSmemStrideBias : 0;
 
+  static constexpr uint32_t kTmaAlignmentInt4s = 128 / sizeof(int4);
+  static constexpr uint32_t align_tma_int4s(uint32_t size) {
+    return CEIL_DIV(size, kTmaAlignmentInt4s) * kTmaAlignmentInt4s;
+  }
+  // TMA needs every per-stage shared-memory tile base to be 128B aligned.
+  static constexpr uint32_t kStageSizeAStorage = align_tma_int4s(kStageSizeA);
+  static constexpr uint32_t kStageSizeBStorage = align_tma_int4s(kStageSizeB);
+  static constexpr uint32_t kStageSizeBSStorage = align_tma_int4s(kStageSizeBS);
+  static constexpr uint32_t kStageSizeBZPStorage = align_tma_int4s(
+      kIsChannelWeightScale ? kChannelSizeBZP : kStageSizeBZP);
+
   static constexpr uint32_t kStageBytesA = kStageSizeA * sizeof(int4);
   static constexpr uint32_t kStageBytesB = kStageSizeB * sizeof(int4);
   static constexpr uint32_t kStageBytesAS = kStageSizeAS * sizeof(int4);
@@ -138,13 +149,13 @@ public:
 
   union alignas(128) {
     struct {
-      int4 a[kNumStages][kStageSizeA];
-      int4 b[kNumStages][kStageSizeB];
+      alignas(128) int4 a[kNumStages][kStageSizeAStorage];
+      alignas(128) int4 b[kNumStages][kStageSizeBStorage];
       IF_HAS_STAGE_INPUT_SCALE(int4 as[kNumStages][kStageSizeAS];)
-      IF_HAS_STAGE_WEIGHT_SCALE(int4 bs[kNumStages][kStageSizeBS];)
-      IF_HAS_ZERO_POINT(int4 bzp[kIsChannelWeightScale ? 1 : kNumStages][kIsChannelWeightScale ? kChannelSizeBZP : kStageSizeBZP];)
-      IF_HAS_CHANNEL_WEIGHT_SCALE(int4 bs_c[kChannelSizeBS];)
-      IF_HAS_BIAS(int4 bias[kBiasSize];)
+      IF_HAS_STAGE_WEIGHT_SCALE(alignas(128) int4 bs[kNumStages][kStageSizeBSStorage];)
+      IF_HAS_ZERO_POINT(alignas(128) int4 bzp[kIsChannelWeightScale ? 1 : kNumStages][kStageSizeBZPStorage];)
+      IF_HAS_CHANNEL_WEIGHT_SCALE(alignas(128) int4 bs_c[kChannelSizeBS];)
+      IF_HAS_BIAS(alignas(128) int4 bias[kBiasSize];)
       IF_HAS_CHANNEL_INPUT_SCALE(int4 as_c[kChannelSizeAS];)
     };
     int4 reduce[MAX(kWarpReduceSize, kBlockOutputSize)];

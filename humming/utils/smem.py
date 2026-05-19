@@ -8,6 +8,12 @@ if TYPE_CHECKING:
     from humming.layer import HummingLayerMeta
 
 
+def _align_up(size: int, alignment: int = 128) -> int:
+    if size == 0:
+        return 0
+    return math.ceil(size / alignment) * alignment
+
+
 def estimate_smem_size(
     a_dtype: dtypes.DataType,
     b_dtype: dtypes.DataType,
@@ -54,8 +60,25 @@ def estimate_smem_size(
         else:
             as_channel_size = block_m * 4
 
-    stage_size = a_stage_size + b_stage_size + as_stage_size + bs_stage_size + bzp_stage_size
-    all_stages_size = stage_size * num_stages
+    offset = 0
+
+    def add_field(size: int, alignment: int = 1):
+        nonlocal offset
+        if size == 0:
+            return
+        offset = _align_up(offset, alignment)
+        offset += size
+
+    add_field(_align_up(a_stage_size) * num_stages, 128)
+    add_field(_align_up(b_stage_size) * num_stages, 128)
+    add_field(as_stage_size * num_stages)
+    add_field(_align_up(bs_stage_size) * num_stages, 128)
+    bzp_stages = 1 if weight_scale_group_size == 0 else num_stages
+    add_field(_align_up(bzp_stage_size or bzp_channel_size) * bzp_stages, 128)
+    add_field(bs_channel_size, 128)
+    add_field(bias_size, 128)
+    add_field(as_channel_size)
+
     moe_tensor_size = 0
     if gemm_type == GemmType.INDEXED:
         moe_tensor_size = block_m * 4 * 2
@@ -63,8 +86,7 @@ def estimate_smem_size(
         moe_tensor_size = num_experts * 4 * 2
     elif gemm_type == GemmType.GROUPED_MASKED:
         moe_tensor_size = num_experts * 4
-    size = all_stages_size + moe_tensor_size
-    size += as_channel_size + bs_channel_size + bzp_channel_size + bias_size
+    size = offset + moe_tensor_size
 
     return size
 
