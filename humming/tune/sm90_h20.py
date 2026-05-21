@@ -195,6 +195,18 @@ class Sm90H20Heuristics(DeviceHeuristics):
                 config["use_tma_a"] = False
                 config["use_tma_c"] = False
 
+            # Small-K MoE down-gemm: size the persistent grid for ~5 output tiles
+            # per CTA — here num_sms is the grid factor (a launch param, GEMM
+            # bit-identical) and is intentionally set above the physical SM count.
+            if config["num_ctas_per_sm"] > 1 and shape_m >= 24576:
+                tiles_per_cta = 5
+                block_m, block_n, _ = config["block_shape"]
+                num_tiles = (meta.shape_n // block_n) * (shape_m // block_m)
+                sms_target = num_tiles / (config["num_ctas_per_sm"] * tiles_per_cta)
+                config["num_sms"] = max(
+                    config["num_sms"], 1 << round(math.log2(sms_target))
+                )
+
         if block_shape_m >= 48 and num_ctas_per_sm <= 2 and num_warps <= 8 and not is_moe:
             config["use_tma"] = True
             config["use_warp_spec"] = True

@@ -34,7 +34,7 @@ def may_build_nvrtc_compile_binary():
     if _cached_binary_path is not None:
         return _cached_binary_path
 
-    src_path = os.path.join(os.path.dirname(__file__), "..", "csrc", "nvrtc_compile.cc")
+    src_path = os.path.join(os.path.dirname(__file__), "..", "csrc", "nvrtc_compile.cpp")
     src_path = os.path.abspath(src_path)
     src_hash = jit_utils.hash_path_content(src_path, releative=True)
 

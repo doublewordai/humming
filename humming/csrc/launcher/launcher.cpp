@@ -273,7 +273,8 @@ Tensor launch_kernel(
   ASSERT_CHECK(configs_t.scalar_type() == ScalarType::Long, "configs must be int64 tensor.");
   ASSERT_CHECK(configs_t.is_contiguous(), "configs must be contiguous.");
   ASSERT_CHECK(configs_t.get_device() < 0, "configs must be a CPU tensor.");
-  IntArrayRef configs(configs_t.data_ptr<int64_t>(), static_cast<size_t>(configs_t.numel()));
+  IntArrayRef configs(static_cast<int64_t *>(configs_t.data_ptr()),
+                      static_cast<size_t>(configs_t.numel()));
   return launch_kernel_impl(configs, a, b, c_, as_, bs_, bzp_, bias_, gs_, sorted_ids_, expert_ids_,
                             num_tokens_padded_, expert_layout_, locks_, top_k, valid_shape_m, should_check_tensor);
 }
