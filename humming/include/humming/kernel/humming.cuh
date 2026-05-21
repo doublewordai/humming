@@ -101,9 +101,9 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
 
   if constexpr (kUsePdl) {
     griddepcontrol_launch_dependents();
-    griddepcontrol_wait();
   }
 
+  bool pdl_waited = false;
   while (scheduler.get_next_block()) {
     mma.zero_accum();
     __syncthreads();
@@ -114,6 +114,12 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     epilogue.set_streamk_state(scheduler.slice_count, scheduler.slice_id, scheduler.locks_offset);
 
     if constexpr (TuningConfig::kUseTmaC) tma_wait_store_group<0, true>();
+    if constexpr (kUsePdl) {
+      if (!pdl_waited) {
+        griddepcontrol_wait();
+        pdl_waited = true;
+      }
+    }
     producer.template load_stage<true, true>(0);
     PRAGMA_UNROLL
     for (uint32_t stage_id = 1; stage_id < MAX(kNumStages - 1, 2); stage_id++) {

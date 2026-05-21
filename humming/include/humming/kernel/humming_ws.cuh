@@ -102,13 +102,19 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     __syncthreads();
     if constexpr (kUsePdl) {
       griddepcontrol_launch_dependents();
-      griddepcontrol_wait();
     }
+    bool pdl_waited = false;
     while (scheduler.get_next_block()) {
       uint32_t &slice_iters = scheduler.slice_iters;
 
       producer.seek(scheduler.expert_id, scheduler.m_block_id, scheduler.n_block_id, scheduler.k_block_id, scheduler.current_shape_m, scheduler.m_offset);
       producer.wait_math_epilogue();
+      if constexpr (kUsePdl) {
+        if (!pdl_waited) {
+          griddepcontrol_wait();
+          pdl_waited = true;
+        }
+      }
       producer.load_stage<true, true>(0);
       PRAGMA_UNROLL
       for (uint32_t stage_id = 1; stage_id < kNumStages - 1; stage_id++) {
