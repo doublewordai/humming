@@ -4,12 +4,12 @@ import os
 import subprocess
 from pathlib import Path
 
-import torch
 from cuda.bindings import nvrtc
 from filelock import FileLock
 
 import humming.utils.jit as jit_utils
 from humming.utils.cuda import filter_cuda_paths
+from humming.utils.nvrtc import may_build_nvrtc_compile_binary
 
 
 class Compiler:
@@ -166,60 +166,34 @@ class NVRTCCompiler(Compiler):
 
     @classmethod
     def _compile(cls, source_path, cache_dirname, sm_version, kernel_expr, flags):
-        try:
-            from cuda.bindings import nvrtc
-        except Exception as e:
-            torch_cuda_version_major = int(torch.version.cuda.split(".")[0])
-            packages = ["nvidia-cuda-nvrtc", "nvidia-cuda-runtime"]
-            if torch_cuda_version_major == 12:
-                packages = [x + "-cu12" for x in packages]
-            raise RuntimeError(
-                "Error when loading nvrtc library. "
-                f"Try install nvrtc module 'pip install -U {' '.join(packages)}'"
-            ) from e
+        binary_path = may_build_nvrtc_compile_binary()
 
-        with open(source_path, "r") as f:
-            code = f.read()
+        shims_dir = Path(cache_dirname) / "shims"
+        shims_dir.mkdir(exist_ok=True)
+        header_args = []
+        for header, content in cls._STD_HEADER_SHIMS.items():
+            shim_file = shims_dir / header
+            with open(shim_file, "w") as f:
+                f.write(content)
+            header_args += ["--header", f"{header}={shim_file.as_posix()}"]
 
-        shim_names, shim_sources = cls._get_std_header_shims()
-        err, prog = nvrtc.nvrtcCreateProgram(
-            code.encode(),
-            b"kernel.cu",
-            len(shim_names),
-            shim_sources,
-            shim_names,
-        )
-        assert err == nvrtc.nvrtcResult.NVRTC_SUCCESS, f"nvrtcCreateProgram failed: {err}"
-
+        target_path = (Path(cache_dirname) / "kernel_tmp.cubin").as_posix()
+        cmd = [
+            binary_path,
+            "--input", source_path,
+            "--output", target_path,
+            *header_args,
+        ]
         if kernel_expr:
             name_expr = " ".join(kernel_expr.split())
-            nvrtc.nvrtcAddNameExpression(prog, name_expr.encode())
+            cmd += ["--name-expression", name_expr]
+        cmd += ["--", *flags]
 
-        opts = [f.encode() for f in flags]
-        err = nvrtc.nvrtcCompileProgram(prog, len(opts), opts)[0]
+        with open(Path(cache_dirname) / "cmdline.json", "w") as f:
+            json.dump(cmd, f, ensure_ascii=False)
 
-        _, log_size = nvrtc.nvrtcGetProgramLogSize(prog)
-        log = b"\0" * log_size
-        nvrtc.nvrtcGetProgramLog(prog, log)
-        stderr = log.decode(errors="replace").rstrip("\0")
-
-        if err != nvrtc.nvrtcResult.NVRTC_SUCCESS:
-            nvrtc.nvrtcDestroyProgram(prog)
-            return 1, "", stderr
-
-        _, cubin_size = nvrtc.nvrtcGetCUBINSize(prog)
-        cubin = b"\0" * cubin_size
-        nvrtc.nvrtcGetCUBIN(prog, cubin)
-        nvrtc.nvrtcDestroyProgram(prog)
-
-        target_path = cache_dirname / "kernel_tmp.cubin"
-        with open(target_path, "wb") as f:
-            f.write(cubin)
-
-        with open(cache_dirname / "cmdline.json", "w") as f:
-            json.dump({"compiler": "nvrtc", "flags": flags}, f, ensure_ascii=False)
-
-        return 0, "", stderr
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.returncode, result.stdout, result.stderr
 
 
 class NVCCCompiler(Compiler):

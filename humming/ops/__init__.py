@@ -23,7 +23,7 @@ def register_kernel(cubin_path: str, func_name: str) -> int:
 
 
 def launch_kernel(
-    configs: list[int],
+    configs: torch.Tensor | list[int],
     inputs: torch.Tensor,
     weight: torch.Tensor,
     outputs: torch.Tensor | None = None,
@@ -40,6 +40,8 @@ def launch_kernel(
     top_k: int = 1,
     valid_shape_m: int = 0,
 ) -> torch.Tensor:
+    if isinstance(configs, list):
+        configs = torch.tensor(configs, dtype=torch.int64, device="cpu")
     return torch.ops.humming.launch_kernel(
         configs,
         inputs,
@@ -81,8 +83,6 @@ def humming_gemm(
     valid_shape_m: int = 0,
 ) -> torch.Tensor:
     configs = HummingKernel.prepare_kernels(layer_config, compute_config, tuning_config)
-    if isinstance(configs, int):
-        configs = [configs]
     return torch.ops.humming.launch_kernel(
         configs,
         inputs,

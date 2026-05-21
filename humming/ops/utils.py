@@ -121,7 +121,7 @@ def init_humming_launcher():
 
     @register_fake("humming::launch_kernel")
     def _launch_kernel_fake(
-        configs: list[int],
+        configs: torch.Tensor,
         inputs: torch.Tensor,
         weight: torch.Tensor,
         outputs: torch.Tensor | None = None,
@@ -138,7 +138,7 @@ def init_humming_launcher():
         top_k: int = 1,
         valid_shape_m: int = 0,
     ) -> torch.Tensor:
-        kernel_id = configs[2]
+        kernel_id = int(configs[2])
         kernel = HummingKernel._id2kernel[kernel_id]
         shape_m = inputs.size(0)
         if kernel.gemm_type == GemmType.INDEXED:
