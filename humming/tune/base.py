@@ -73,16 +73,16 @@ class DeviceHeuristics:
                 if shape_m / meta.num_experts / moe_block_size < 0.9:
                     break
 
-            shape_m = int(shape_m / meta.num_experts / 0.9)
-            shape_m = max(shape_m, 1)
+            new_shape_m = int(shape_m / meta.num_experts / 0.9)
+            new_shape_m = max(new_shape_m, 1)
             if block_shape_m == 128:
-                if np.ceil(shape_m / 96) * 96 < np.ceil(shape_m / 64) * 64:
+                if np.ceil(new_shape_m / 96) * 96 < np.ceil(new_shape_m / 64) * 64:
                     block_shape_m = 96
-                elif np.ceil(shape_m / 128) * 128 < np.ceil(shape_m / 64) * 64 * 1.05:
+                elif np.ceil(new_shape_m / 128) * 128 < np.ceil(new_shape_m / 64) * 64 * 1.05:
                     block_shape_m = 128
                 else:
                     block_shape_m = moe_block_size
-            elif shape_m >= 64 and shape_m < 96:
+            elif new_shape_m >= 64 and new_shape_m < 96:
                 block_shape_m = 48
             else:
                 block_shape_m = moe_block_size
@@ -180,13 +180,13 @@ class DeviceHeuristics:
                 block_shape_m = num_warps_m * warp_shape_m
 
         if num_ctas_per_sm == 1:
-            factor = min(4.5, meta.shape_n / (3 * block_shape_n))
+            factor = min(4.5, meta.shape_k / (3 * block_shape_k))
             num_sms = min(num_sms, math.ceil(num_blocks_n * num_blocks_m * factor))
 
         return {
             "block_shape": (block_shape_m, block_shape_n, block_shape_k),
             "warp_shape": (warp_shape_m, warp_shape_n, warp_shape_k),
-            "use_stream_k": use_stream_k,
+            "use_stream_k": meta.shape_k > 1024 and use_stream_k,
             "use_f16_accum": use_f16_accum,
             "num_sms": num_sms,
             "num_stages": num_stages,

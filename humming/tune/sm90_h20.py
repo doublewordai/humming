@@ -136,9 +136,7 @@ class Sm90H20Heuristics(DeviceHeuristics):
 
         num_sms = cls.get_num_sms()
         while num_blocks_n * num_blocks_m * 2 < num_sms * num_ctas_per_sm:
-            if is_moe and num_blocks_n * num_blocks_m < num_sms:
-                break
-            if meta.a_dtype.num_bits != 16 and warp_shape_n == 64:
+            if warp_shape_n == 64:
                 warp_shape_n = warp_shape_n // 2
                 block_shape_n = block_shape_n // 2
                 num_blocks_n = num_blocks_n * 2
@@ -168,18 +166,21 @@ class Sm90H20Heuristics(DeviceHeuristics):
                 warp_shape_k = 512 // meta.a_dtype.num_bits
                 block_shape_k = warp_shape_k * num_warps_k * 2
 
-        # Small-K + large-N MoE (e.g. down): bump ctas to 4 so more concurrent
-        # CTAs hide each other's short TC pipeline (each tile has few K-iters).
-        if (
-            is_moe
-            and meta.shape_k <= 512
-            and meta.shape_n >= 2048
-            and block_shape_n <= 128
-            and num_ctas_per_sm in (2, 3)
-            and block_shape_m <= 32
-            and num_blocks_n * num_blocks_m >= num_sms * 4
-        ):
-            num_ctas_per_sm = 4
+        if is_moe and meta.shape_k <= 512 and meta.shape_n >= 2048 and block_shape_m <= 32:
+            if block_shape_n == 256:
+                warp_shape_n = 32
+                block_shape_n = 128
+                num_blocks_n = num_blocks_n * 2
+
+            if num_blocks_n * num_blocks_m >= num_sms * 4:
+                num_ctas_per_sm = 4
+
+        if warp_shape_k == block_shape_k and warp_shape_k == 512 // meta.a_dtype.num_bits:
+            block_shape = (block_shape_m, block_shape_n, block_shape_k * 2)
+            smem_size = estimate_smem_size_layer(meta, block_shape, gemm_type, num_stages)
+            if smem_size * num_ctas_per_sm < cls.max_smem_size:
+                block_shape_k = block_shape_k * 2
+                warp_shape_k = warp_shape_k * 2
 
         max_num_stages = 4
         for num_stages_new in range(num_stages + 1, max_num_stages + 1):
@@ -189,7 +190,7 @@ class Sm90H20Heuristics(DeviceHeuristics):
                 num_stages = num_stages_new
 
         if num_ctas_per_sm == 1:
-            factor = min(4.5, meta.shape_n / (3 * block_shape_n))
+            factor = min(4.5, meta.shape_k / (3 * block_shape_k))
             num_sms = min(num_sms, math.ceil(num_blocks_n * num_blocks_m * factor))
 
         while meta.shape_k % block_shape_k != 0:
