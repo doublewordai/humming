@@ -57,7 +57,7 @@ inline int64_t get_num_sms(int64_t num_sms, int64_t dev) {
   return static_cast<int64_t>(dev_sms);
 }
 
-Tensor launch_kernel(
+Tensor launch_kernel_impl(
     IntArrayRef configs,
     Tensor a,
     Tensor b,
@@ -242,9 +242,36 @@ int64_t register_kernel(const std::string &cubin_path, const std::string &func_n
   return hash_id;
 }
 
+Tensor launch_kernel(
+    Tensor configs_t,
+    Tensor a,
+    Tensor b,
+    std::optional<Tensor> c_,
+    std::optional<Tensor> as_,
+    std::optional<Tensor> bs_,
+    std::optional<Tensor> bzp_,
+    std::optional<Tensor> bias_,
+    std::optional<Tensor> gs_,
+    std::optional<Tensor> sorted_ids_,
+    std::optional<Tensor> expert_ids_,
+    std::optional<Tensor> num_tokens_padded_,
+    std::optional<Tensor> expert_layout_,
+    std::optional<Tensor> locks_,
+    int64_t top_k,
+    int64_t valid_shape_m,
+    bool should_check_tensor = true) {
+  ASSERT_CHECK(configs_t.scalar_type() == ScalarType::Long, "configs must be int64 tensor.");
+  ASSERT_CHECK(configs_t.is_contiguous(), "configs must be contiguous.");
+  ASSERT_CHECK(configs_t.get_device() < 0, "configs must be a CPU tensor.");
+  IntArrayRef configs(static_cast<int64_t *>(configs_t.data_ptr()),
+                      static_cast<size_t>(configs_t.numel()));
+  return launch_kernel_impl(configs, a, b, c_, as_, bs_, bzp_, bias_, gs_, sorted_ids_, expert_ids_,
+                            num_tokens_padded_, expert_layout_, locks_, top_k, valid_shape_m, should_check_tensor);
+}
+
 COMMON_TORCH_LIBRARY(humming, m) {
   m.def(
-      "launch_kernel(int[] configs, Tensor a, Tensor b, Tensor? c, "
+      "launch_kernel(Tensor configs, Tensor a, Tensor b, Tensor? c, "
       "Tensor? as_, Tensor? bs, Tensor? bzp, Tensor? bias, Tensor? gs, "
       "Tensor? sorted_ids, Tensor? expert_ids, Tensor? num_tokens_padded, Tensor? expert_layout, "
       "Tensor? locks, SymInt top_k, SymInt valid_shape_m, bool should_check_tensor = True) -> Tensor");

@@ -328,7 +328,7 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
         layer_config: str | dict,
         compute_config: str | dict | None = None,
         tuning_config: str | dict | list | None = None,
-    ) -> int | list[int]:
+    ) -> "torch.Tensor":
         def prepare_config_str(config: str | dict | list | None):
             if config is None:
                 return "{}"
@@ -367,7 +367,11 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
             config = layer_config_obj | compute_config_obj | tuning_config_obj
             num_sms = config.pop("num_sms", 0)
             kernel = HummingKernel(**config)
-            res = [0, 1 << 30, kernel.kernel_id, num_sms]
+            res = torch.tensor(
+                [0, 1 << 30, kernel.kernel_id, num_sms],
+                dtype=torch.int64,
+                device="cpu",
+            )
             cls._str2kernel_cache[cache_key] = res
             return res
 
@@ -400,5 +404,6 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
                 kernel.load_cubin()
                 res += [config[0], config[1], kernel.kernel_id, num_sms]
 
+        res = torch.tensor(res, dtype=torch.int64, device="cpu")
         cls._str2kernel_cache[cache_key] = res
         return res

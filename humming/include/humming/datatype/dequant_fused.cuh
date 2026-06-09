@@ -14,27 +14,17 @@ CUDA_INLINE uint2 fused_dequant_single_for_mxfp4(const uint32_t qb, const uint32
 
 template <>
 CUDA_INLINE uint2 fused_dequant_single_for_mxfp4<Float8E4M3>(const uint32_t qb, const uint32_t exp_offset) {
-  uint32_t qb_org = qb;
-  uint32_t qb_ls4 = qb << 4;
-  uint32_t qb_rs4 = qb >> 4;
-
-  uint32_t res[2];
-  uint32_t signs[2] = {qb_ls4, qb};
-  uint32_t others[2] = {qb & 0x07070707, qb_rs4 & 0x07070707};
-
-  uint32_t exp_offset_buffer1 = (exp_offset * 0x08080800) + (exp_offset ? -0x00000400 : 0);
-  uint32_t exp_offset_buffer2 = exp_offset * 0x08080808;
+  uint32_t exp_offset_buffer1 = (exp_offset * 0x08080800) + ((0x03020100 << 2) - 0x00000400);
+  uint32_t exp_offset_buffer2 = (exp_offset * 0x08080808) + (0x07060504 << 2);
 
   uint32_t exp_offsets[2] = {
       __byte_perm(exp_offset_buffer1, exp_offset_buffer2, qb),
       __byte_perm(exp_offset_buffer1, exp_offset_buffer2, qb >> 16)};
 
-  PRAGMA_UNROLL
-  for (uint32_t i = 0; i < 2; i++) {
-    uint32_t val = lop3_and_or(signs[i], 0x80808080, others[i] << 2);
-    val = val + __byte_perm(exp_offsets[0], exp_offsets[1], 0x6420 + 0x1111 * i);
-    res[i] = val;
-  }
+  uint32_t res[2] = {
+    lop3_and_or(qb << 4, 0x80808080, exp_offsets[0]),
+    lop3_and_or(qb, 0x80808080, exp_offsets[1])
+  };
 
   return *reinterpret_cast<uint2 *>(res);
 }

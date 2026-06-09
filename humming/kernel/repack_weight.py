@@ -60,6 +60,7 @@ class RepackWeightKernel(KernelRuntime):
             ctypes.c_uint32,
             ctypes.c_uint32,
             ctypes.c_uint32,
+            ctypes.c_uint32,
         )
         self.prepare()
 
@@ -70,6 +71,7 @@ class RepackWeightKernel(KernelRuntime):
         zero_point: torch.Tensor | None,
         padded_shape_n: int | None = None,
         padded_shape_k: int | None = None,
+        interleave_mode: int = 3,
     ):
         self.check_context()
         num_experts = 1 if inputs.ndim == 2 else inputs.size(0)
@@ -98,6 +100,7 @@ class RepackWeightKernel(KernelRuntime):
             shape_k,
             padded_shape_n or shape_n,
             padded_shape_k or shape_k,
+            interleave_mode,
         )
 
         cbd.cuLaunchKernelEx(config, self.kernel, (arg_values, self.arg_types), 0)

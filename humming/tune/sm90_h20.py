@@ -111,8 +111,9 @@ class Sm90H20Heuristics(DeviceHeuristics):
             if meta.a_dtype == dtypes.int8 and block_shape_m > 32 and block_shape_m % 16 != 0:
                 block_shape_m = math.ceil(block_shape_m / 16) * 16
         else:
-            for moe_block_size in [8, 16, 32, 48, 64]:
-                if shape_m / meta.num_experts / moe_block_size < 0.9:
+            block_size_configs = [(8, 0.7), (16, 0.8), (32, 0.9), (48, 0.9), (64, 0.9)]
+            for moe_block_size, threshold in block_size_configs:
+                if shape_m / meta.num_experts / moe_block_size < threshold:
                     break
 
             new_shape_m = int(shape_m / meta.num_experts / 0.9)
@@ -135,7 +136,7 @@ class Sm90H20Heuristics(DeviceHeuristics):
 
         num_sms = cls.get_num_sms()
         while num_blocks_n * num_blocks_m * 2 < num_sms * num_ctas_per_sm:
-            if meta.a_dtype.num_bits != 16 and warp_shape_n == 64:
+            if warp_shape_n == 64:
                 warp_shape_n = warp_shape_n // 2
                 block_shape_n = block_shape_n // 2
                 num_blocks_n = num_blocks_n * 2
@@ -157,10 +158,29 @@ class Sm90H20Heuristics(DeviceHeuristics):
             warp_shape_k = 512 // meta.a_dtype.num_bits
             block_shape_k = warp_shape_k * 2
 
-        if num_warps <= 8 and block_shape_m <= 16:
-            num_warps_k = block_shape_k // warp_shape_k
-            warp_shape_k = 512 // meta.a_dtype.num_bits
-            block_shape_k = warp_shape_k * num_warps_k * 2
+        if num_warps <= 8 and block_shape_m <= 32:
+            if is_moe and warp_shape_n == 64:
+                warp_shape_n = warp_shape_n // 2
+            else:
+                num_warps_k = block_shape_k // warp_shape_k
+                warp_shape_k = 512 // meta.a_dtype.num_bits
+                block_shape_k = warp_shape_k * num_warps_k * 2
+
+        if is_moe and meta.shape_k <= 512 and meta.shape_n >= 2048 and block_shape_m <= 32:
+            if block_shape_n == 256:
+                warp_shape_n = 32
+                block_shape_n = 128
+                num_blocks_n = num_blocks_n * 2
+
+            if num_blocks_n * num_blocks_m >= num_sms * 4:
+                num_ctas_per_sm = 4
+
+        if warp_shape_k == block_shape_k and warp_shape_k == 512 // meta.a_dtype.num_bits:
+            block_shape = (block_shape_m, block_shape_n, block_shape_k * 2)
+            smem_size = estimate_smem_size_layer(meta, block_shape, gemm_type, num_stages)
+            if smem_size * num_ctas_per_sm < cls.max_smem_size:
+                block_shape_k = block_shape_k * 2
+                warp_shape_k = warp_shape_k * 2
 
         max_num_stages = 4
         for num_stages_new in range(num_stages + 1, max_num_stages + 1):
@@ -170,7 +190,7 @@ class Sm90H20Heuristics(DeviceHeuristics):
                 num_stages = num_stages_new
 
         if num_ctas_per_sm == 1:
-            factor = min(4.5, meta.shape_n / (3 * block_shape_n))
+            factor = min(4.5, meta.shape_k / (3 * block_shape_k))
             num_sms = min(num_sms, math.ceil(num_blocks_n * num_blocks_m * factor))
 
         while meta.shape_k % block_shape_k != 0:
@@ -194,6 +214,16 @@ class Sm90H20Heuristics(DeviceHeuristics):
             if gemm_type == GemmType.INDEXED:
                 config["use_tma_a"] = False
                 config["use_tma_c"] = False
+
+            # Small-K MoE down-gemm: size the persistent grid for ~5 output tiles
+            # per CTA — here num_sms is the grid factor (a launch param, GEMM
+            # bit-identical) and is intentionally set above the physical SM count.
+            if config["num_ctas_per_sm"] > 1 and shape_m >= 24576:
+                tiles_per_cta = 5
+                block_m, block_n, _ = config["block_shape"]
+                num_tiles = (meta.shape_n // block_n) * (shape_m // block_m)
+                sms_target = num_tiles / (config["num_ctas_per_sm"] * tiles_per_cta)
+                config["num_sms"] = max(config["num_sms"], 1 << round(math.log2(sms_target)))
 
         if block_shape_m >= 48 and num_ctas_per_sm <= 2 and num_warps <= 8 and not is_moe:
             config["use_tma"] = True

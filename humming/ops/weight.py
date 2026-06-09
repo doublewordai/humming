@@ -109,6 +109,7 @@ def repack_weight(
     should_preprocess_with_zp: bool = False,
     use_wgmma: bool = False,
     use_fused_e8m0_scale: bool = False,
+    interleave_mode: int = 3,
     group_size_zp: int = 0,
     padded_shape_n: int | None = None,
     padded_shape_k: int | None = None,
@@ -166,6 +167,7 @@ def repack_weight(
             zero_point=zero_point,
             padded_shape_n=padded_shape_n,
             padded_shape_k=padded_shape_k,
+            interleave_mode=interleave_mode,
         )
 
     return outputs

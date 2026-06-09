@@ -2,7 +2,7 @@
 #include <humming/utils/all.cuh>
 
 template <uint32_t kNumBitsB, uint32_t kNumBitsA>
-CUDA_INLINE void humming_pack_weight(uint32_t *in_arr, uint32_t *out_arr) {
+CUDA_INLINE void humming_pack_weight(uint32_t *in_arr, uint32_t *out_arr, uint32_t interleave_mode) {
   constexpr uint32_t kNumBitsPaddedB = static_next_power_of_2(kNumBitsB);
 
   auto get_interleaved_index = [&](uint32_t i) {
@@ -23,8 +23,24 @@ CUDA_INLINE void humming_pack_weight(uint32_t *in_arr, uint32_t *out_arr) {
       PRAGMA_UNROLL
       for (uint32_t k = 0; k < 32 / kNumBitsPaddedB; k++) {
         uint32_t new_k = get_interleaved_index(k);
-        constexpr uint32_t mask = (1 << kNumBitsB) - 1;
-        val |= (in_arr[i * 32 + j * 32 / kNumBitsPaddedB + new_k] & mask) << (k * kNumBitsPaddedB);
+        constexpr uint32_t mask1 = (1 << (kNumBitsB - 1));
+        constexpr uint32_t mask2 = mask1 - 1;
+
+        if (interleave_mode % 2 == 0) {
+          uint32_t single_val = in_arr[i * 32 + j * 32 / kNumBitsPaddedB + k];
+          val |= (single_val & mask2) << (k * kNumBitsPaddedB);
+        } else {
+          uint32_t single_val = in_arr[i * 32 + j * 32 / kNumBitsPaddedB + new_k];
+          val |= (single_val & mask2) << (k * kNumBitsPaddedB);
+        };
+
+        if (interleave_mode / 2 == 0) {
+          uint32_t single_val = in_arr[i * 32 + j * 32 / kNumBitsPaddedB + k];
+          val |= (single_val & mask1) << (k * kNumBitsPaddedB);
+        } else {
+          uint32_t single_val = in_arr[i * 32 + j * 32 / kNumBitsPaddedB + new_k];
+          val |= (single_val & mask1) << (k * kNumBitsPaddedB);
+        };
       }
 
       out_arr[i * kNumBitsPaddedB + j] = val;
@@ -106,7 +122,7 @@ template <
 __global__ void weight_repack_nk(
     const uint32_t *in_ptr, uint32_t *out_ptr, const uint32_t *zp_ptr,
     uint32_t shape_n, uint32_t shape_k,
-    uint32_t padded_shape_n, uint32_t padded_shape_k) {
+    uint32_t padded_shape_n, uint32_t padded_shape_k, uint32_t interleave_mode) {
 
   constexpr uint32_t kNumBitsInputB = kPackedInput ? kNumBitsB : 32;
   constexpr uint32_t smem_stride = 64 * kNumBitsInputB / 32;
@@ -237,7 +253,7 @@ __global__ void weight_repack_nk(
   constexpr uint32_t kNumBitsPaddedB = static_next_power_of_2(kNumBitsB);
   uint32_t out_arr[4 * kNumBitsPaddedB];
 
-  humming_pack_weight<kNumBitsB, kNumBitsA>(reinterpret_cast<uint32_t *>(tmp), out_arr);
+  humming_pack_weight<kNumBitsB, kNumBitsA>(reinterpret_cast<uint32_t *>(tmp), out_arr, interleave_mode);
 
   uint32_t out_stride = (256 / kNumBitsA) * padded_shape_n * kNumBitsB / 32;
   uint32_t col_offset = (256 / kNumBitsA) * (64 * blockIdx.x) * kNumBitsB / 32;

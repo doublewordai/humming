@@ -1,7 +1,9 @@
+import json
 from typing import TYPE_CHECKING
 
 import torch
 
+from humming import dtypes
 from humming.kernel.humming import HummingKernel
 from humming.ops.bench import tops_bench  # noqa
 from humming.ops.hadamard import hadamard_quant_input, hadamard_transform
@@ -24,7 +26,7 @@ def register_kernel(cubin_path: str, func_name: str) -> int:
 
 
 def launch_kernel(
-    configs: list[int],
+    configs: torch.Tensor | list[int],
     inputs: torch.Tensor,
     weight: torch.Tensor,
     outputs: torch.Tensor | None = None,
@@ -41,6 +43,8 @@ def launch_kernel(
     top_k: int = 1,
     valid_shape_m: int = 0,
 ) -> torch.Tensor:
+    if isinstance(configs, list):
+        configs = torch.tensor(configs, dtype=torch.int64, device="cpu")
     return torch.ops.humming.launch_kernel(
         configs,
         inputs,
@@ -82,8 +86,6 @@ def humming_gemm(
     valid_shape_m: int = 0,
 ) -> torch.Tensor:
     configs = HummingKernel.prepare_kernels(layer_config, compute_config, tuning_config)
-    if isinstance(configs, int):
-        configs = [configs]
     return torch.ops.humming.launch_kernel(
         configs,
         inputs,
@@ -104,6 +106,42 @@ def humming_gemm(
     )
 
 
+def _humming_gemm_fake(
+    layer_config: str,
+    compute_config: str | None,
+    tuning_config: str | None,
+    inputs: torch.Tensor,
+    weight: torch.Tensor,
+    outputs: torch.Tensor | None = None,
+    input_scale: torch.Tensor | None = None,
+    weight_scale: torch.Tensor | None = None,
+    zero_point: torch.Tensor | None = None,
+    bias: torch.Tensor | None = None,
+    global_scale: torch.Tensor | None = None,
+    sorted_ids: torch.Tensor | None = None,
+    expert_ids: torch.Tensor | None = None,
+    num_tokens_padded: torch.Tensor | None = None,
+    expert_layout: torch.Tensor | None = None,
+    locks: torch.Tensor | None = None,
+    top_k: int = 1,
+    valid_shape_m: int = 0,
+) -> torch.Tensor:
+    layer_obj = json.loads(layer_config) if layer_config else {}
+    compute_obj = json.loads(compute_config) if compute_config else {}
+
+    shape_n = int(layer_obj["shape_n"]) - int(layer_obj.get("pad_shape_n", 0))
+    c_dtype = dtypes.DataType.from_str(layer_obj["c_dtype"])
+    output_dtype = dtypes.torch_dtype_map[c_dtype]
+
+    shape_m = inputs.size(0)
+    if compute_obj.get("gemm_type") == "indexed":
+        shape_m = shape_m * top_k
+
+    if outputs is not None:
+        return outputs
+    return inputs.new_empty((shape_m, shape_n), dtype=output_dtype)
+
+
 register_op("humming::hadamard_transform", hadamard_transform, hadamard_transform)
 register_op("humming::hadamard_quant_input", hadamard_quant_input, hadamard_quant_input)
 register_op("humming::quant_input", quant_input, quant_input)
@@ -112,7 +150,7 @@ register_op("humming::dequant_weight", dequant_weight, dequant_weight)
 register_op("humming::repack_weight", repack_weight, repack_weight)
 register_op("humming::pack_weight", pack_weight, pack_weight)
 register_op("humming::unpack_weight", unpack_weight, unpack_weight)
-register_op("humming::humming_gemm", humming_gemm, humming_gemm)
+register_op("humming::humming_gemm", humming_gemm, _humming_gemm_fake)
 register_op("humming::moe_fused_mul_sum", moe_fused_mul_sum, moe_fused_mul_sum)
 register_op(
     "humming::process_mxfp4_w4a8_weight",

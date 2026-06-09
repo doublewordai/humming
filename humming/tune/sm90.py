@@ -49,6 +49,9 @@ class Sm90Heuristics(DeviceHeuristics):
             if block_shape_k > 256:
                 block_shape_k = block_shape_k // 2
                 warp_shape_k = warp_shape_k // 2
+
+            while meta.shape_k % block_shape_k != 0:
+                block_shape_k = block_shape_k // 2
         else:
             block_shape_n = 256
             block_shape_k = warp_shape_k

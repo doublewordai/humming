@@ -337,7 +337,7 @@ class HummingLayerMethod:
         if meta.a_dtype == dtypes.int8:
             max_range_val = 3
         elif meta.a_dtype == dtypes.float8e4m3:
-            max_range_val = 12
+            max_range_val = 11
         else:
             raise ValueError(f"unsupported a_dtype: {meta.a_dtype}")
 
@@ -346,12 +346,13 @@ class HummingLayerMethod:
         scale_min_new = scale_max - scale_range
         delta_scale_offsets = weight_scale.maximum(scale_min_new) - weight_scale
         weight_scale = weight_scale.maximum(scale_min_new) - scale_min_new
+        if meta.a_dtype == dtypes.float8e4m3:
+            weight_scale = weight_scale + 1
         weight_scale = weight_scale.view(origin_dtype).view(origin_shape)
         ops.process_mxfp4_w4a8_weight(weight, delta_scale_offsets, inplace=True)
 
         scale_factor = 2 ** (scale_min_new.view(-1).float() - 127)
-        if meta.a_dtype == dtypes.int8:
-            scale_factor = scale_factor / 2
+        scale_factor = scale_factor / 2
         if global_scale is not None:
             assert global_scale is not None
             out_global_scale = global_scale * scale_factor
@@ -417,6 +418,10 @@ class HummingLayerMethod:
                 global_scale=global_scale,
             )
 
+        interleave_mode = 3
+        if meta.use_fused_e8m0_scale and meta.a_dtype == dtypes.float8e4m3:
+            interleave_mode = 2
+
         weight = prepare_humming_weight(
             weight=weight,
             b_dtype=meta.b_dtype,
@@ -425,6 +430,7 @@ class HummingLayerMethod:
             use_wgmma=meta.mma_type == MmaType.WGMMA,
             use_fused_e8m0_scale=meta.use_fused_e8m0_scale,
             packed=True,
+            interleave_mode=interleave_mode,
         )
 
         if weight_scale is not None:
@@ -866,6 +872,7 @@ class HummingLayer(HummingModule):
         num_tokens_padded: torch.Tensor | None = None,
         expert_layout: torch.Tensor | None = None,
         top_k: int = 1,
+        valid_shape_m: int = 0,
         compute_config: dict | str | None = None,
         tuning_config: dict | list | str | None = None,
         hadamard_block_size: int | None = None,
@@ -880,6 +887,7 @@ class HummingLayer(HummingModule):
             num_tokens_padded=num_tokens_padded,
             expert_layout=expert_layout,
             top_k=top_k,
+            valid_shape_m=valid_shape_m,
             compute_config=compute_config,
             tuning_config=tuning_config,
             hadamard_block_size=hadamard_block_size,

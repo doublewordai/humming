@@ -181,6 +181,7 @@ def prepare_humming_weight(
     packed: bool = False,
     padded_shape_n: int | None = None,
     padded_shape_k: int | None = None,
+    interleave_mode: int = 3,
 ) -> torch.Tensor:
     is_moe = weight.ndim == 3
     weight = weight.unsqueeze(0) if not is_moe else weight
@@ -243,6 +244,7 @@ def prepare_humming_weight(
         should_preprocess_for_int2fp=should_preprocess_for_int2fp,
         should_preprocess_with_zp=should_preprocess_with_zp,
         use_wgmma=use_wgmma,
+        interleave_mode=interleave_mode,
         use_fused_e8m0_scale=use_fused_e8m0_scale,
         group_size_zp=group_size_zp,
     )

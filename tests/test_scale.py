@@ -19,6 +19,7 @@ from humming.utils.weight import (
     "b_dtype",
     [
         "uint3",
+        "uint4",
         "uint5",
         "uint8",
         "int4",
@@ -428,18 +429,19 @@ def test_fused_e8m0_weight_scale(c_dtype, weight_scale_group_size, has_global_sc
     scale_max = weight_scale.max()
     scale_min = weight_scale.min()
     scale_range = scale_max - scale_min
-    max_range = 12
+    max_range = 11
     if a_dtype == dtypes.float8e5m2:
         max_range = max_range - 1
     max_range = torch.tensor(max_range, dtype=torch.uint8, device=scale_range.device)
     scale_range = scale_range.minimum(max_range)
     scale_min_new = scale_max - scale_range
-    weight_scale = weight_scale.maximum(scale_min_new) - scale_min_new
+    weight_scale = weight_scale.maximum(scale_min_new) - scale_min_new + 1
     weight_scale = weight_scale & 0xF
     weight_scale = weight_scale.view(origin_dtype)
 
     scale_factor = 2 ** (scale_min_new.view(-1).float() - 127)
-    weight = prepare_humming_weight(weight, b_dtype, a_dtype)
+    scale_factor = scale_factor / 2
+    weight = prepare_humming_weight(weight, b_dtype, a_dtype, interleave_mode=2)
     weight_scale = prepare_humming_weight_scale(weight_scale, to_apply_on_c=False)
     if has_global_scale:
         global_scale = global_scale * scale_factor
