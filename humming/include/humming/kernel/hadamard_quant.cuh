@@ -293,8 +293,8 @@ __global__ void hadamard_quant_input(
   // ---- Compute scale ----
   float scale_raw;
   if constexpr (kIsInt) {
-    constexpr float pos_lim = (float)((1 << (TargetType::kBits - 1)) - 1) + 0.49f;
-    constexpr float neg_lim = (float)(1 << (TargetType::kBits - 1)) + 0.49f;
+    constexpr float pos_lim = (float)((1 << (TargetType::kBits - 1)) - 1) + 0.0f;
+    constexpr float neg_lim = (float)(1 << (TargetType::kBits - 1)) + 0.0f;
     float s1 = local_max / pos_lim;
     float s2 = -local_min / neg_lim;
     scale_raw = fmaxf(fmaxf(s1, s2), 1e-30f);
