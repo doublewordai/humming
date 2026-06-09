@@ -7,12 +7,21 @@ import re
 import struct
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
 from filelock import FileLock
 
 import humming.utils.jit as jit_utils
+
+
+def popen_and_reap(cmd, **kwargs):
+    proc = subprocess.Popen(cmd, **kwargs)
+    threading.Thread(
+        target=proc.wait, name="humming-bg-build-reaper", daemon=True
+    ).start()
+    return proc
 
 
 def read_symbol_value(filename, symbol_name, default_value=None):

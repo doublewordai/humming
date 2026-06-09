@@ -134,7 +134,7 @@ def build_humming_launcher_in_bg():
     cmd = "import humming.ops.utils; humming.ops.utils.init_humming_launcher()"
     env = os.environ.copy()
     env["HUMMING_DISABLE_PARALLEL_BUILD"] = "1"
-    subprocess.Popen(
+    jit_utils.popen_and_reap(
         [sys.executable, "-c", cmd],
         env=env,
         stderr=subprocess.DEVNULL,

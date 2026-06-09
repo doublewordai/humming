@@ -108,7 +108,7 @@ def build_nvrtc_compile_binary_in_bg():
     cmd = "import humming.utils.nvrtc; humming.utils.nvrtc.may_build_nvrtc_compile_binary()"
     env = os.environ.copy()
     env["HUMMING_DISABLE_PARALLEL_BUILD"] = "1"
-    subprocess.Popen(
+    jit_utils.popen_and_reap(
         [sys.executable, "-c", cmd],
         env=env,
         stderr=subprocess.DEVNULL,
