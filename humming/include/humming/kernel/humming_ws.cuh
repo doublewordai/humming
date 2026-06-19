@@ -98,7 +98,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
 
     auto producer = ProducerPipeline(smem, pa(), pb(), pas(), pbs(), pbzp(), pbias(), shape_m);
     producer.init_mbarrier();
-    mbarrier_init_sync<(TuningConfig::kMultiCastSizeA * TuningConfig::kMultiCastSizeB) > 1>();
+    mbarrier_init_sync<((TuningConfig::kMultiCastSizeA * TuningConfig::kMultiCastSizeB) > 1)>();
     while (scheduler.get_next_block()) {
       uint32_t &slice_iters = scheduler.slice_iters;
 
@@ -136,7 +136,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     auto s2r_pipe = S2RMemoryPipeline(smem, mma, epilogue);
 
     consumer.init_mbarrier();
-    mbarrier_init_sync<(TuningConfig::kMultiCastSizeA * TuningConfig::kMultiCastSizeB) > 1>();
+    mbarrier_init_sync<((TuningConfig::kMultiCastSizeA * TuningConfig::kMultiCastSizeB) > 1)>();
     consumer.arrive(kNumStages);
 
     while (scheduler.get_next_block()) {
