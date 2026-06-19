@@ -104,6 +104,18 @@ void mbarrier_wait(void *barrier, bool phase_parity) {
 };
 
 
+template <bool kUseCluster>
+CUDA_INLINE void mbarrier_init_sync() {
+  if constexpr (kUseCluster) {
+    asm volatile("fence.mbarrier_init.release.cluster;");
+    asm volatile("barrier.cluster.arrive;");
+    asm volatile("barrier.cluster.wait;");
+  } else {
+    __syncthreads();
+  }
+}
+
+
 template <bool kUseCluster = false>
 CUDA_INLINE void mbarrier_arrive(void *barrier) {
   uint32_t smem_int_mbar = cast_smem_ptr_to_uint(barrier);
