@@ -32,7 +32,7 @@ class CompressedTensorsWeightSchema(BaseWeightSchema):
             "mxfp4-pack-quantized",
         ]
         msg = "actorder is not supported by humming"
-        assert self.actorder is None or self.actorder == "weight", msg
+        assert self.actorder is None or self.actorder in ["weight", "static"], msg
         self.weight_key = "weight_packed" if "pack" in self.format else "weight"
         if isinstance(self.block_structure, list):
             self.block_structure = tuple(self.block_structure)

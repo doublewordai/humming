@@ -234,7 +234,8 @@ class HummingWeightSchema(BaseWeightSchema):
 
             if global_scale.nelement() == (num_experts or 1):
                 tensors["global_scale"] = global_scale.to(torch.float32)
-                schema.bs_dtype = dtypes.float32
+                if self.weight_scale_type == WeightScaleType.TENSOR:
+                    schema.bs_dtype = dtypes.float32
             elif self.weight_scale_type == WeightScaleType.TENSOR:
                 schema.weight_scale_type = WeightScaleType.CHANNEL
                 schema.bs_dtype = dtypes.DataType.from_torch_dtype(param_dtype)

@@ -140,6 +140,7 @@ class HummingLayerMeta(LayerConfig):
                 self.a_dtype in [dtypes.int8, dtypes.int4]
                 and self.input_scale_group_size == 0
                 and self.weight_scale_group_size > 0
+                and self.weight_scale_group_size_n == 1
             )
 
         if self.use_int_weight_scale:
