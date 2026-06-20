@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "humming-kernels"
-version = "0.1.5"
+dynamic = ["version"]
 description = "Quantization GEMM Kernel"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,6 +34,11 @@ cu13 = [
     "nvidia-cuda-nvcc",
     "nvidia-cuda-nvrtc",
 ]
+
+[tool.setuptools_scm]
+version_scheme = "post-release"
+local_scheme = "node-and-date"
+version_file = "humming/_version.py"
 
 [tool.setuptools]
 include-package-data = true

@@ -10,3 +10,6 @@ __pycache__
 .git_old/
 dist
 build
+
+# setuptools_scm generated
+humming/_version.py
