@@ -197,6 +197,14 @@ public:
     if (dp_mn_iters) {
       slice_iters = K_BLOCKS;
 
+      // constexpr uint32_t kRasterGroupN = 16;
+      // uint32_t _ras_full_group = kRasterGroupN * m_blocks;
+      // uint32_t _ras_group = dp_mn_next_index / _ras_full_group;
+      // uint32_t _ras_in_group = dp_mn_next_index % _ras_full_group;
+      // uint32_t _ras_n0 = _ras_group * kRasterGroupN;
+      // uint32_t _ras_gn = (N_BLOCKS - _ras_n0) < kRasterGroupN ? (N_BLOCKS - _ras_n0) : kRasterGroupN;
+      // m_block_id = _ras_in_group / _ras_gn;
+      // n_block_id = _ras_n0 + _ras_in_group % _ras_gn;
       m_block_id = dp_mn_next_index / N_BLOCKS;
       n_block_id = dp_mn_next_index % N_BLOCKS;
 

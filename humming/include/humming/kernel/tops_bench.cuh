@@ -46,5 +46,5 @@ __global__ void tops_bench(uint32_t *out_ptr) {
       MmaOpClass::fma(regs_a, regs_b, regs_c, regs_c);
   }
 
-  if (threadIdx.x == 8192) out_ptr[0] = reinterpret_cast<uint32_t *>(&regs_c)[0];
+  if (blockIdx.x == 8192) out_ptr[0] = reinterpret_cast<uint32_t *>(&regs_c)[0];
 };
