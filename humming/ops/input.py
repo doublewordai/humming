@@ -18,14 +18,32 @@ def calc_scale(tensor, dtype):
     elif dtype == "int8":
         maxval = tl.maximum(tl.max(tensor), 1e-30)
         minval = tl.minimum(tl.min(tensor), -1e-30)
-        scale_x = tl.maximum(maxval / 127.49, -minval / 128.49)
+        scale_x = tl.maximum(maxval / 127, -minval / 128)
     elif dtype == "int4":
         maxval = tl.maximum(tl.max(tensor), 1e-30)
         minval = tl.minimum(tl.min(tensor), -1e-30)
-        scale_x = tl.maximum(maxval / 7.49, -minval / 8.49)
+        scale_x = tl.maximum(maxval / 7, -minval / 8)
     else:
         tl.static_assert(False, "unsupported dtype: " + dtype)
     return scale_x
+
+
+@triton.jit
+def finalize_scale(scale, scale_dtype: tl.constexpr, gs, inv_gs):
+    if scale_dtype == "float8e8m0":
+        scale = scale * inv_gs
+        s_uint = scale.to(tl.uint32, bitcast=True)
+        s_uint = (s_uint + 0x007FFFFF) & 0x7F800000
+        scale = s_uint.to(tl.float32, bitcast=True)
+        s_store = (s_uint >> 23).to(tl.uint8)
+        scale = scale * gs
+    elif scale_dtype == "float8e4m3":
+        scale = scale * inv_gs
+        s_store = scale.to(tl.float8e4nv)
+        scale = s_store.to(tl.float32) * gs
+    else:
+        s_store = scale
+    return scale, s_store
 
 
 @triton.jit
@@ -104,9 +122,17 @@ def _quant_tensor_kernel(
     dtype: tl.constexpr,
     M_ROWS,
     M_MAJOR: tl.constexpr,
+    SCALE_DTYPE: tl.constexpr,
+    HAS_GLOBAL_SCALE: tl.constexpr,
+    global_scale_ptr,
 ):
     block_id = tl.program_id(0).to(tl.int64)
     tl.static_assert(N % GROUP_SIZE == 0)
+
+    gs = 1.0
+    if HAS_GLOBAL_SCALE:
+        gs = tl.load(global_scale_ptr).to(tl.float32)
+    inv_gs = 1.0 / gs
 
     row_num_blocks = N // GROUP_SIZE
 
@@ -129,32 +155,32 @@ def _quant_tensor_kernel(
             x1 = tl.load(x_ptr + (offset + cols1), mask=mask, other=0.0).to(tl.float32)
             x2 = tl.load(x_ptr + (offset + cols2), mask=mask, other=0.0).to(tl.float32)
 
-            scale = (
-                tl.maximum(calc_scale(x1, dtype), calc_scale(x2, dtype))
-                if is_dynamic
-                else tl.load(scale_ptr + col_block_id, mask=in_range)
-            )
+            if is_dynamic:
+                scale = tl.maximum(calc_scale(x1, dtype), calc_scale(x2, dtype))
+                scale, s_store = finalize_scale(scale, SCALE_DTYPE, gs, inv_gs)
+            else:
+                scale = tl.load(scale_ptr + col_block_id, mask=in_range)
             inv_scale = 1 / scale
             x_q = quant_tensor_x2(x1 * inv_scale, x2 * inv_scale, dtype)
             tl.store(xq_ptr + group_id * GROUP_SIZE // 2 + cols, x_q, mask=mask)
 
             if is_dynamic:
-                tl.store(scale_ptr + scale_off, scale, mask=in_range)
+                tl.store(scale_ptr + scale_off, s_store, mask=in_range)
         else:
             cols = tl.arange(0, BLOCK)
             mask = (cols < GROUP_SIZE) & in_range
             x = tl.load(x_ptr + offset + cols, mask=mask, other=0.0).to(tl.float32)
-            scale = (
-                calc_scale(x, dtype)
-                if is_dynamic
-                else tl.load(scale_ptr + col_block_id, mask=in_range)
-            )
+            if is_dynamic:
+                scale = calc_scale(x, dtype)
+                scale, s_store = finalize_scale(scale, SCALE_DTYPE, gs, inv_gs)
+            else:
+                scale = tl.load(scale_ptr + col_block_id, mask=in_range)
             inv_scale = 1 / scale
             x_q = quant_tensor(x * inv_scale, dtype)
             tl.store(xq_ptr + group_id * GROUP_SIZE + cols, x_q, mask=mask)
 
             if is_dynamic:
-                tl.store(scale_ptr + scale_off, scale, mask=in_range)
+                tl.store(scale_ptr + scale_off, s_store, mask=in_range)
 
 
 def quant_input(
@@ -164,6 +190,8 @@ def quant_input(
     outputs: torch.Tensor | None = None,
     group_size: int | None = None,
     m_major_scale: bool = False,
+    scale_dtype: str = "float32",
+    global_scale: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if dtype in ["int4", "float4e2m1"]:
         output_shape = (*inputs.shape[:-1], inputs.size(-1) // 2)
@@ -201,9 +229,23 @@ def quant_input(
     if m_major_scale:
         assert is_dynamic, "m_major_scale requires dynamic quantization"
 
+    if scale_dtype == "float32":
+        scale_torch_dtype = torch.float32
+    elif scale_dtype == "float8e4m3":
+        scale_torch_dtype = torch.float8_e4m3fn
+    elif scale_dtype == "float8e8m0":
+        scale_torch_dtype = torch.uint8
+    else:
+        raise ValueError("unsupported scale_dtype: " + scale_dtype)
+
+    if scale_dtype != "float32":
+        assert is_dynamic, "non-float32 scale_dtype requires dynamic quantization"
+
+    has_global_scale = global_scale is not None
+
     if is_dynamic:
         shape = (num_groups, m_rows_stride) if m_major_scale else (m_rows, num_groups)
-        scales = torch.empty(shape, dtype=torch.float32, device=inputs.device)
+        scales = torch.empty(shape, dtype=scale_torch_dtype, device=inputs.device)
 
     if not isinstance(inputs, FakeTensor):
         assert inputs.is_cuda
@@ -232,6 +274,9 @@ def quant_input(
             dtype,
             m_rows_stride,
             m_major_scale,
+            scale_dtype,
+            has_global_scale,
+            global_scale,
             num_warps=num_warps,
             num_stages=num_stages,
         )
@@ -242,5 +287,8 @@ def quant_input(
         scales = scales.view(num_groups, m_rows_stride)
     else:
         scales = scales.view(*outputs.shape[:-1], scales.size(-1))
+
+    if scale_dtype == "float8e8m0" and scales.numel() > 0:
+        scales = scales.view(torch.float8_e8m0fnu)
 
     return outputs, scales
