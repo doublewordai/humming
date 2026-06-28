@@ -23,6 +23,7 @@ class LayerConfig(BaseHummingConfig):
     a_dtype: dtypes.DataType
     c_dtype: dtypes.DataType
     bs_dtype: dtypes.DataType | None = None
+    as_dtype: dtypes.DataType | None = None
 
     # quant param config
     input_scale_group_size: int = 0
@@ -89,7 +90,7 @@ class LayerConfig(BaseHummingConfig):
             elif self.weight_scale_group_size > 0:
                 self.weight_scale_type = WeightScaleType.GROUP
 
-        for name in ["a", "b", "c", "bs"]:
+        for name in ["a", "b", "c", "bs", "as"]:
             value = getattr(self, f"{name}_dtype")
             if isinstance(value, str):
                 value = dtypes.DataType.from_str(value)
@@ -107,6 +108,10 @@ class LayerConfig(BaseHummingConfig):
             self.mma_type = MmaType(self.mma_type)
 
         self.has_input_scale = self.a_dtype.num_bits != 16
+        if not self.has_input_scale:
+            self.as_dtype = None
+        elif self.as_dtype is None:
+            self.as_dtype = self.bs_dtype if self.mma_type == MmaType.MXMMA else dtypes.float32
         self.is_channel_weight_scale = self.weight_scale_type == WeightScaleType.CHANNEL
         self.is_tensor_weight_scale = self.weight_scale_type in [
             WeightScaleType.TENSOR,
