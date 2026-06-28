@@ -26,7 +26,7 @@ private:
   static constexpr bool kMMajorInputScale = ComputeConfig::kUseMMajorInputScale && kIsGroupScale;
   static_assert(!kMMajorInputScale || !kIsIndexedGemm);
   static constexpr bool kUseTma = TuningConfig::kUseTmaAS && kHasInputScale && !kIsIndexedGemm;
-  static_assert(!kUseTma || kMMajorInputScale || kIsChannelScale);
+  static_assert(!kUseTma || kMMajorInputScale || kIsChannelScale || kUseMxmma);
   static constexpr uint32_t kGroupSize = kIsGroupScale ? LayerConfig::kInputScaleGroupSize : ProblemShape::K;
 
   static_assert(ProblemShape::K == kGroupSize || (ProblemShape::K - PadShape::K) % kGroupSize == 0);
@@ -67,8 +67,10 @@ public:
   template <bool kShouldAdvance = true>
   CUDA_INLINE void load(void *smem_ptr, void *mbar_ptr) {
     counter = kLoadsPerGroup != 1 ? (counter + 1) % kLoadsPerGroup : 0;
-    if constexpr (kUseMxmma) load_mx_legacy(smem_ptr);
-    else if constexpr (kUseTma) load_tma(smem_ptr, mbar_ptr);
+    if constexpr (kUseMxmma) {
+      if constexpr (kUseTma) load_mx_tma(smem_ptr, mbar_ptr);
+      else load_mx_legacy(smem_ptr);
+    } else if constexpr (kUseTma) load_tma(smem_ptr, mbar_ptr);
     else if constexpr (kMMajorInputScale) load_legacy_m_major(smem_ptr);
     else load_legacy(smem_ptr);
     if constexpr (kShouldAdvance) advance();
@@ -129,6 +131,10 @@ public:
     if (thread_id == 0) tma_load_2d(tensor_map_ptr, smem_ptr, mbar_ptr, row_offset, col_offset);
   }
 
+  CUDA_INLINE void load_mx_tma(void *smem_ptr, void *mbar_ptr) {
+    if (thread_id == 0) tma_load_2d(tensor_map_ptr, smem_ptr, mbar_ptr, row_offset, col_offset / 4);
+  }
+
   CUDA_INLINE void load_legacy(void *smem_ptr) {
     if constexpr (!kIsIndexedGemm && kIsChannelScale) {
       uint32_t *smem_ptr_load = reinterpret_cast<uint32_t *>(smem_ptr);
@@ -165,12 +171,14 @@ public:
   void advance() {
     if (kIsGroupScale && (kLoadsPerGroup == 1 || counter == 0)) {
       col_offset += kNumGroups;
-      if constexpr (kUseMxmma) {
-        gmem_ptr += CEIL_DIV(kNumGroups, 4);
-      } else if constexpr (!kUseTma && kMMajorInputScale) {
-        gmem_ptr += kNumGroups * total_shape_m;
-      } else if constexpr (!kUseTma) {
-        gmem_ptr += kNumGroups;
+      if constexpr (!kUseTma) {
+        if constexpr (kUseMxmma) {
+          gmem_ptr += CEIL_DIV(kNumGroups, 4);
+        } else if constexpr (kMMajorInputScale) {
+          gmem_ptr += kNumGroups * total_shape_m;
+        } else {
+          gmem_ptr += kNumGroups;
+        }
       }
     }
   }
@@ -197,7 +205,8 @@ public:
 
     if constexpr (!kIsIndexedGemm) {
       if constexpr (kUseMxmma) {
-        gmem_ptr = gmem_ptr_raw + (row_offset * (kProblemNumGroups / 4) + col_offset / 4);
+        if constexpr (!kUseTma)
+          gmem_ptr = gmem_ptr_raw + (row_offset * (kProblemNumGroups / 4) + col_offset / 4);
       } else if constexpr (kUseTma) {
         // tma loads via tensor map; gmem_ptr unused
       } else if constexpr (kMMajorInputScale) {

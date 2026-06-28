@@ -129,8 +129,10 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
             self.use_m_major_input_scale = True
 
         # TMA loads of the input scale require it to be M-major ([num_groups, M]).
+        # mxmma is exempt: its packed sf is already stored M-major ([num_words, M]).
         if self.use_tma_as:
-            assert self.use_m_major_input_scale, (
+            is_mxmma = self.mma_type == MmaType.MXMMA
+            assert self.use_m_major_input_scale or is_mxmma, (
                 "use_tma_as requires use_m_major_input_scale=True "
                 "(input scale must be stored M-major [num_groups, M])"
             )
