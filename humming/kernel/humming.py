@@ -213,13 +213,18 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
             group = self.weight_scale_group_size or mma_shape_k
             assert mma_shape_k % group == 0
             scale_vec = mma_shape_k // group
+            # The block-scaled mma runs as a-typed x mma_b_dtype. By default a != b
+            # is handled by dequantizing the stored b (ElementB) -> a in transform_b
+            # (Mechanism B), so the instruction stays a x a. Native mixed
+            # fp8 x fp4/fp6 (mxf8f6f4, no dequant) opts in via mxmma_native_mixed.
+            mma_b_dtype = self.b_dtype if self.mxmma_native_mixed else self.a_dtype
             return MmaOpClass.from_config(
                 self.mma_type,
                 mma_shape_m,
                 mma_shape_n,
                 mma_shape_k,
                 self.a_dtype,
-                self.b_dtype,
+                mma_b_dtype,
                 dtypes.float32,
                 sf_dtype=self.bs_dtype,
                 scale_vec=scale_vec,

@@ -129,6 +129,13 @@ class LayerConfig(BaseHummingConfig):
         value = self.mma_type.value.lower()
         return ["mma", "wgmma", "umma_placeholder", "mxmma"].index(value)
 
+    @property
+    def mxmma_native_mixed(self) -> bool:
+        # Native block-scaled mixed mma (a=fp8 x b=fp4/fp6 via the mxf8f6f4
+        # instruction, feeding b without dequant). Not yet enabled: a != b under
+        # mxmma currently always dequantizes the stored b -> a (Mechanism B).
+        return False
+
 
 @dataclasses.dataclass(kw_only=True)
 class ComputeConfig(BaseHummingConfig):

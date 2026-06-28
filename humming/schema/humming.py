@@ -256,12 +256,12 @@ class HummingInputSchema(BaseInputSchema):
     quant_method: str = "humming"
     a_dtype: dtypes.DataType | None = None
     input_scale_group_size: int = 0
-    as_dtype: dtypes.DataType | None = None
+    input_scale_dtype: dtypes.DataType | None = None
 
     KWARGS_ALIAS: ClassVar[dict[str, list[str]]] = {
         "a_dtype": ["input_dtype", "dtype"],
         "input_scale_group_size": ["group_size"],
-        "as_dtype": ["input_scale_dtype", "scale_dtype"],
+        "input_scale_dtype": ["scale_dtype"],
     }
 
     def __post_init__(self):

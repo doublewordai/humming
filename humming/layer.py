@@ -207,7 +207,7 @@ class HummingLayerMethod:
             a_dtype=input_schema.a_dtype or f16_dtype,
             b_dtype=weight_schema.b_dtype,
             bs_dtype=weight_schema.bs_dtype or f16_dtype,
-            as_dtype=input_schema.as_dtype,
+            as_dtype=input_schema.input_scale_dtype,
             c_dtype=f16_dtype,
             shape_n=shape_n + pad_shape_n,
             shape_k=shape_k + pad_shape_k,
