@@ -30,13 +30,16 @@ template <
     uint32_t kGroupSize,
     uint32_t kThreadsPerTile,
     uint32_t kTilesPerThread,
-    bool kHasExtraScale>
+    bool kHasExtraScale,
+    bool kMMajor = false>
 __global__ void hadamard_quant_input_wide(
     const SourceType *__restrict__ in_ptr,
     void *__restrict__ out_ptr,
     float *__restrict__ scales_ptr,
     float extra_scale,
-    uint32_t num_groups) {
+    uint32_t num_groups,
+    uint32_t shape_m = 0,
+    uint32_t groups_per_row = 0) {
 
   static_assert((kBlockSize & (kBlockSize - 1)) == 0);
   static_assert(kGroupSize > kBlockSize);
@@ -220,7 +223,18 @@ __global__ void hadamard_quant_input_wide(
   }
   float inv_scale = 1.f / scale;
 
-  if (tid == 0) scales_ptr[group_idx] = scale;
+  if (tid == 0) {
+    uint32_t scale_idx;
+    if constexpr (kMMajor) {
+      // M-major scale [num_groups_total, M]: scale_idx = group_in_row * M + row.
+      uint32_t row = group_idx / groups_per_row;
+      uint32_t group_in_row = group_idx - row * groups_per_row;
+      scale_idx = group_in_row * shape_m + row;
+    } else {
+      scale_idx = group_idx;
+    }
+    scales_ptr[scale_idx] = scale;
+  }
 
   // ---- Quantize + store ----
   // Thread output bytes are contiguous in the group's output stream:

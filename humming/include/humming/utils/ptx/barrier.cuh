@@ -61,6 +61,7 @@ CUDA_INLINE void barrier_release2(int *lock, int32_t val) {
   sync_part_threads<kNumSyncThreads, kNumThreads>();
   if (threadIdx.x == 0) {
     if (val < 0) {
+      asm volatile("fence.acq_rel.gpu;\n");
       __stcg(&lock[0], val);
     } else {
       int32_t val2 = 1;

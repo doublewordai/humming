@@ -78,4 +78,4 @@ class QuantWeightKernel(KernelRuntime):
             0 if zero_point is None else zero_point.data_ptr(),
         )
 
-        cbd.cuLaunchKernelEx(config, self.kernel, (arg_values, self.arg_types), 0)
+        cbd.cuLaunchKernelEx(config, self.func, (arg_values, self.arg_types), 0)

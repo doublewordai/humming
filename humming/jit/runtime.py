@@ -103,6 +103,9 @@ class KernelRuntime:
         result, kernel = cbd.cuLibraryGetKernel(lib, kernel_name.encode())
         assert result == 0, repr(result)
         self.kernel = kernel
+        result, func = cbd.cuKernelGetFunction(kernel)
+        assert result == 0, repr(result)
+        self.func = func
         self.cubin_loaded = True
 
     def check_context(self):

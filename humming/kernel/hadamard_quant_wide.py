@@ -55,6 +55,7 @@ class HadamardQuantInputWideKernel(KernelRuntime):
     block_size: int
     group_size: int
     has_extra_scale: bool = False
+    m_major: bool = False
 
     def init_kernel(self):
         assert self.group_size > self.block_size, (
@@ -80,13 +81,16 @@ class HadamardQuantInputWideKernel(KernelRuntime):
             f"    {self.group_size},\n"
             f"    {threads_per_tile},\n"
             f"    {tiles_per_thread},\n"
-            f"    {int(self.has_extra_scale)}>"
+            f"    {int(self.has_extra_scale)},\n"
+            f"    {int(self.m_major)}>"
         )
         self.arg_types = (
             ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.c_float,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
             ctypes.c_uint32,
         )
         self.prepare()
@@ -105,6 +109,10 @@ class HadamardQuantInputWideKernel(KernelRuntime):
         assert scales.dtype == torch.float32
 
         num_groups = inputs.numel() // self.group_size
+        shape_m = inputs.numel() // inputs.size(-1)
+        if self.m_major:
+            shape_m = (shape_m + 3) // 4 * 4
+        groups_per_row = inputs.size(-1) // self.group_size
         device = inputs.device
 
         config = cbd.CUlaunchConfig()
@@ -122,6 +130,8 @@ class HadamardQuantInputWideKernel(KernelRuntime):
             scales.data_ptr(),
             float(extra_scale),
             num_groups,
+            shape_m,
+            groups_per_row,
         )
 
         cbd.cuLaunchKernelEx(config, self.kernel, (arg_values, self.arg_types), 0)

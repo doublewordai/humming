@@ -15,7 +15,7 @@ template <
 class EpiloguePipeline {
 private:
   using SmemReducer = EpilogueSmemReducer<MmaOpClass, BlockShape, WarpShape, ElementC, LayerConfig, TuningConfig>;
-  using SmemWriter = EpilogueSmemWriter<MmaOpClass, ArithClass, BlockShape, WarpShape, ElementA, ElementC, LayerConfig, TuningConfig>;
+  using SmemWriter = EpilogueSmemWriter<SharedStorage, MmaOpClass, ArithClass, BlockShape, WarpShape, ElementA, ElementC, LayerConfig, TuningConfig>;
   using GmemWriter = EpilogueGmemWriter<SharedStorage, ArithClass, ProblemShape, BlockShape, PadShape, ElementC, ComputeConfig, TuningConfig>;
   using OutputPtrType = std::conditional_t<TuningConfig::kUseTmaC, const void *, void *>;
 

@@ -69,6 +69,7 @@ CUDA_INLINE void shlf_trans_mma_c(T &vals) {
 
 
 template <
+    class SharedStorage,
     class MmaOpClass, class ArithClass,
     class BlockShape, class WarpShape,
     class ElementA, class ElementC,
@@ -117,7 +118,7 @@ public:
 
     auto &regs = *reinterpret_cast<CRegistersArrayType *>(regs_ptr);
     scalar_t2 *smem_half2_ptr = reinterpret_cast<scalar_t2 *>(smem_ptr);
-    uint32_t smem = cast_smem_ptr_to_uint(smem_ptr) / 128;
+    uint32_t smem = offsetof(SharedStorage, reduce) / 128 % 8;
     using PackTypeC = std::conditional_t<
         sizeof(ValTypeC) == 2, scalar_t2,
         std::conditional_t<kIsIntAccum, int2, float2>>;

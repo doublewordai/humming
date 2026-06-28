@@ -2,10 +2,10 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-import torch
 
 from humming import dtypes
 from humming.config import GemmType
+from humming.utils.device import get_device_num_sms
 from humming.utils.smem import estimate_smem_size_layer
 
 if TYPE_CHECKING:
@@ -212,7 +212,7 @@ class DeviceHeuristics:
 
     @classmethod
     def get_num_sms(cls):
-        return torch.cuda.get_device_properties().multi_processor_count
+        return get_device_num_sms()
 
     @classmethod
     def get_configs(

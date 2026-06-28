@@ -53,9 +53,9 @@ public:
   }
 
   template <bool kShouldAdvance = true>
-  CUDA_INLINE void load(int4 *smem_ptr, void *mbar_ptr) {
+  CUDA_INLINE void load(int4 *smem_ptr, void *mbar_ptr, uint32_t stage_id = 0) {
     if constexpr (kUseTma) load_tma(smem_ptr, mbar_ptr);
-    else load_legacy(smem_ptr);
+    else load_legacy(smem_ptr, stage_id);
     if constexpr (kShouldAdvance) advance();
   }
 
@@ -74,19 +74,20 @@ public:
   }
 
   CUDA_INLINE
-  void load_legacy(int4 *smem_ptr) {
+  void load_legacy(int4 *smem_ptr, uint32_t stage_id) {
     if constexpr (kSwizzleBytes == 128) {
-      load_legacy_swizzled_128B(smem_ptr);
+      load_legacy_swizzled_128B(smem_ptr, stage_id);
     } else if constexpr (kSwizzleBytes == 64) {
-      load_legacy_swizzled_64B(smem_ptr);
+      load_legacy_swizzled_64B(smem_ptr, stage_id);
     }
   }
 
   CUDA_INLINE
-  void load_legacy_swizzled_128B(int4 *smem_ptr) {
+  void load_legacy_swizzled_128B(int4 *smem_ptr, uint32_t stage_id) {
     static_assert(BlockShape::K * ElementA::kBits >= 1024);
-    uint32_t smem_base = cast_smem_ptr_to_uint(smem_ptr);
-    uint32_t smem_swizzled_col = (thread_id % 8) ^ (((thread_id % 64) / 8 + smem_base / 128)) % 8;
+    uint32_t smem_uint = offsetof(SharedStorage, stages) + stage_id * sizeof(typename SharedStorage::StageStorage);
+    uint32_t smem_base = smem_uint / 128 % 8;
+    uint32_t smem_swizzled_col = (thread_id % 8) ^ (((thread_id % 64) / 8 + smem_base)) % 8;
 
     PRAGMA_UNROLL
     for (uint32_t i = 0; i < kLoadIters; i++) {
@@ -112,10 +113,11 @@ public:
   }
 
   CUDA_INLINE
-  void load_legacy_swizzled_64B(int4 *smem_ptr) {
+  void load_legacy_swizzled_64B(int4 *smem_ptr, uint32_t stage_id) {
     static_assert(BlockShape::K * ElementA::kBits == 512);
-    uint32_t smem_uint = cast_smem_ptr_to_uint(smem_ptr);
-    uint32_t smem_swizzled_col = (thread_id % 8) ^ (((thread_id % 32) / 8 + smem_uint / 128) % 4);
+    uint32_t smem_uint = offsetof(SharedStorage, stages) + stage_id * sizeof(typename SharedStorage::StageStorage);
+    uint32_t smem_base = smem_uint / 128 % 4;
+    uint32_t smem_swizzled_col = (thread_id % 8) ^ (((thread_id % 32) / 8 + smem_base) % 4);
 
     PRAGMA_UNROLL
     for (uint32_t i = 0; i < kLoadIters; i++) {

@@ -11,7 +11,7 @@ template <
     class SharedStorage, class MMA, class Epilogue,
     class BlockShape, class WarpShape,
     class ElementA, class ElementB, class ElementBS,
-    class LayerConfig, class TuningConfig>
+    class LayerConfig, class ComputeConfig, class TuningConfig>
 class S2RMemoryPipeline {
 private:
   static constexpr bool kUseWgmma = MMA::MmaOpClass::kMmaType == MmaType::WGMMA;
@@ -32,9 +32,9 @@ private:
   static constexpr bool kHasBias = LayerConfig::kHasBias;
 
   using MmaOpClass = typename MMA::MmaOpClass;
-  using LoaderA = S2RMemoryLoaderA<MmaOpClass, BlockShape, WarpShape, ElementA, TuningConfig>;
+  using LoaderA = S2RMemoryLoaderA<SharedStorage, MmaOpClass, BlockShape, WarpShape, ElementA, TuningConfig>;
   using LoaderB = S2RMemoryLoaderB<BlockShape, WarpShape, ElementA, ElementB, TuningConfig>;
-  using LoaderAS = S2RMemoryLoaderAS<MmaOpClass, BlockShape, WarpShape, ElementA, LayerConfig, TuningConfig>;
+  using LoaderAS = S2RMemoryLoaderAS<MmaOpClass, BlockShape, WarpShape, ElementA, LayerConfig, ComputeConfig, TuningConfig>;
   using LoaderBS = S2RMemoryLoaderBS<MmaOpClass, BlockShape, WarpShape, ElementA, ElementBS, LayerConfig, TuningConfig>;
   using LoaderBZP = S2RMemoryLoaderBZP<BlockShape, WarpShape, ElementA, ElementB, LayerConfig, TuningConfig>;
   using LoaderBias = S2RMemoryLoaderBias<MmaOpClass, BlockShape, WarpShape, TuningConfig>;
@@ -61,22 +61,26 @@ public:
     iter_id = iter_id % kWarpItersK;
     uint32_t buffer_id = iter_id % 2;
 
-    loader_b.load(smem.b[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);
+    loader_b.load(smem.stages[stage_id].b, mma.regs_qb_as_ptr(buffer_id), iter_id);
     if constexpr (!kUseWgmma)
-      loader_a.load(smem.a[stage_id], mma.regs_a_as_ptr(buffer_id), iter_id);
+      loader_a.load(smem.stages[stage_id].a, mma.regs_a_as_ptr(buffer_id), iter_id, stage_id);
     if constexpr (kUseMxmma) {
       if constexpr (kIsGroupInputScale)
-        loader_as.load_sf(smem.as[stage_id], mma.regs_sfa_as_ptr(buffer_id), iter_id);
+        loader_as.load_sf(smem.stages[stage_id].as, mma.regs_sfa_as_ptr(buffer_id), iter_id);
       if constexpr (kIsGroupOrBlockWeightScale)
-        loader_bs.load_sf(smem.bs[stage_id], mma.regs_sfb_as_ptr(buffer_id), iter_id);
+        loader_bs.load_sf(smem.stages[stage_id].bs, mma.regs_sfb_as_ptr(buffer_id), iter_id);
     } else {
       if constexpr (kIsGroupInputScale)
-        loader_as.load(smem.as[stage_id], mma.arith.regs_as_as_ptr(buffer_id), iter_id);
+        loader_as.load(smem.stages[stage_id].as, mma.arith.regs_as_as_ptr(buffer_id), iter_id);
       if constexpr (kIsGroupOrBlockWeightScale)
-        loader_bs.load(smem.bs[stage_id], mma.arith.regs_bs_as_ptr(buffer_id), iter_id);
+        loader_bs.load(smem.stages[stage_id].bs, mma.arith.regs_bs_as_ptr(buffer_id), iter_id);
     }
-    if constexpr (kHasZeroPoint && (kIsGroupOrBlockWeightScale || kIsFirst))
-      loader_bzp.load(smem.bzp[stage_id], mma.arith.regs_zp_as_ptr(buffer_id), iter_id);
+    if constexpr (kHasZeroPoint && (kIsGroupOrBlockWeightScale || kIsFirst)) {
+      if constexpr (kIsChannelWeightScale)
+        loader_bzp.load(smem.bzp_c, mma.arith.regs_zp_as_ptr(buffer_id), iter_id);
+      else
+        loader_bzp.load(smem.stages[stage_id].bzp, mma.arith.regs_zp_as_ptr(buffer_id), iter_id);
+    }
   }
 
   CUDA_INLINE void load_channel(uint32_t slice_id) {

@@ -26,6 +26,7 @@ private:
   static constexpr bool kUseCpAsync = TuningConfig::kUseCpAsync;
   static constexpr bool kUseTma = TuningConfig::kUseTma;
   static constexpr bool kUseTmaA = TuningConfig::kUseTmaA;
+  static constexpr bool kUseTmaAS = TuningConfig::kUseTmaAS && (ComputeConfig::kGemmType != GemmType::INDEXED);
   static constexpr bool kUseTmaB = TuningConfig::kUseTmaB;
   static constexpr bool kUseTmaBS = TuningConfig::kUseTmaBS;
   static constexpr bool kUseTmaBZP = TuningConfig::kUseTmaBZP;
@@ -55,7 +56,8 @@ private:
     else legacy_load_bytes += SharedStorage::kStageBytesB;
 
     if constexpr (kIsGroupInputScale) {
-      legacy_load_bytes += SharedStorage::kStageBytesAS;
+      if constexpr (kUseTmaAS) tma_load_bytes += SharedStorage::kStageBytesAS;
+      else legacy_load_bytes += SharedStorage::kStageBytesAS;
     }
 
     if constexpr (kIsGroupWeightScale || kIsBlockWeightScale) {
@@ -76,7 +78,8 @@ private:
     uint32_t legacy_load_bytes = 0;
 
     if constexpr (kIsChannelInputScale) {
-      legacy_load_bytes += SharedStorage::kChannelBytesAS;
+      if constexpr (kUseTmaAS) tma_load_bytes += SharedStorage::kChannelBytesAS;
+      else legacy_load_bytes += SharedStorage::kChannelBytesAS;
     }
 
     if constexpr (kIsChannelWeightScale) {
@@ -141,6 +144,7 @@ public:
 
     if (thread_id == 0) {
       if constexpr (kUseTmaA) prefetch_tensor_map(void_ptr_a);
+      if constexpr (kUseTmaAS) prefetch_tensor_map(void_ptr_as);
       if constexpr (kUseTmaB) prefetch_tensor_map(void_ptr_b);
       if constexpr (kUseTmaBS) prefetch_tensor_map(void_ptr_bs);
       if constexpr (kUseTmaBZP) prefetch_tensor_map(void_ptr_bzp);
@@ -184,16 +188,19 @@ public:
     if (pred) {
       uint64_t *mbar_ptr = nullptr;
       if constexpr (kUseMBarrier) mbar_ptr = &smem.load_mbar[mbar_index];
-      loader_a.template load<kShouldAdvance>(smem.a[stage_id], mbar_ptr);
-      loader_b.template load<kShouldAdvance>(smem.b[stage_id], mbar_ptr);
+      loader_a.template load<kShouldAdvance>(smem.stages[stage_id].a, mbar_ptr, stage_id);
+      loader_b.template load<kShouldAdvance>(smem.stages[stage_id].b, mbar_ptr);
       if constexpr (kIsGroupInputScale) {
-        loader_as.template load<kShouldAdvance>(smem.as[stage_id], mbar_ptr);
+        loader_as.template load<kShouldAdvance>(smem.stages[stage_id].as, mbar_ptr);
       };
       if constexpr (kIsGroupWeightScale || kIsBlockWeightScale) {
-        loader_bs.template load<kShouldAdvance>(smem.bs[stage_id], mbar_ptr);
+        loader_bs.template load<kShouldAdvance>(smem.stages[stage_id].bs, mbar_ptr);
       };
       if constexpr (kHasZeroPoint && (kIsGroupWeightScale || kIsFirst)) {
-        loader_bzp.template load<kShouldAdvance>(smem.bzp[stage_id], mbar_ptr);
+        if constexpr (kIsChannelWeightScale)
+          loader_bzp.template load<kShouldAdvance>(smem.bzp_c, mbar_ptr);
+        else
+          loader_bzp.template load<kShouldAdvance>(smem.stages[stage_id].bzp, mbar_ptr);
       }
       load_bytes = get_stage_load_bytes<kIsFirst>();
     }

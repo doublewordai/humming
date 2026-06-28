@@ -4,16 +4,14 @@
 
 
 template <uint32_t swizzle_bytes = 128>
-CUDA_INLINE uint64_t make_wgmma_smem_desc(void *smem_ptr, uint32_t iter_id) {
+CUDA_INLINE uint64_t make_wgmma_smem_desc(uint32_t addr) {
   static_assert(swizzle_bytes == 128 || swizzle_bytes == 64);
 
   constexpr uint64_t swizzle_type = swizzle_bytes == 128 ? 1 : 2;
   constexpr uint64_t stride = (swizzle_bytes * 8) >> 4;
   constexpr uint64_t desc_base = (swizzle_type << 62) | (stride << 32);
 
-  uint32_t addr = cast_smem_ptr_to_uint(smem_ptr);
   uint64_t desc = desc_base;
-
   reinterpret_cast<uint32_t *>(&desc)[0] = (addr >> 4);
 
   return desc;
@@ -65,6 +63,7 @@ public:
     smem_offset = row_offset * (kSwizzleBytes / 16);
     smem_offset += (col_offset % kSwizzleSizeK) * ElementA::kBits / 128;
     smem_offset += (col_offset / kSwizzleSizeK) * (BlockShape::M * kSwizzleBytes / 16);
+    smem_offset = smem_offset * sizeof(int4);
   }
 
   CUDA_INLINE
@@ -106,8 +105,9 @@ public:
 
     PRAGMA_UNROLL
     for (uint32_t k = 0; k < kPartMmaShapeK / MmaShape::K; k++) {
-      int4 *smem_ptr = smem.a[stage_id] + smem_offset + iter_id * 2 + k;
-      uint64_t desc = make_wgmma_smem_desc<kSwizzleBytes>(smem_ptr, iter_id);
+      uint32_t smem_addr = offsetof(SharedStorage, stages) + stage_id * sizeof(typename SharedStorage::StageStorage);
+      smem_addr += (iter_id * 2 + k) * sizeof(int4) + smem_offset;
+      uint64_t desc = make_wgmma_smem_desc<kSwizzleBytes>(smem_addr);
 
       constexpr uint32_t kNumIters = WarpShape::N / (MmaShape::N / 4);
 

@@ -43,7 +43,7 @@ def estimate_tensorcore_max_tops(gpu_index=0):
         major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(handle)
         sm_version = major * 10 + minor
         max_clock_mhz = pynvml.nvmlDeviceGetMaxClockInfo(handle, pynvml.NVML_CLOCK_SM)
-        sm_count = torch.cuda.get_device_properties(gpu_index).multi_processor_count
+        sm_count = get_device_num_sms(gpu_index)
 
         ops_map = {
             75: 1024,
@@ -93,3 +93,16 @@ def estimate_compute_bound_threshold(weight_nbytes, shape_n, shape_k, dtype, use
     right_factor = shape_n * shape_k * 2 / max_tops
 
     return left_bias / (right_factor - left_factor) * 1e3
+
+
+def get_device_num_sms(gpu_index: int | None = None):
+    if gpu_index is None:
+        default_device = torch.get_default_device()
+        if default_device.type == "cuda":
+            gpu_index = default_device.index
+        else:
+            gpu_index = 0
+
+    dev_props = torch.cuda.get_device_properties(gpu_index)
+
+    return dev_props.multi_processor_count

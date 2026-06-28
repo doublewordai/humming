@@ -121,6 +121,7 @@ Tensor launch_kernel_impl(
   void *tensor_map_buffer_ptr = tensor_map_buffer.data_ptr();
 
   auto tensor_map_a = make_tma_desc_a(a, kernel_data);
+  auto tensor_map_as = make_tma_desc_as(as_, kernel_data);
   auto tensor_map_b = make_tma_desc_b(b, kernel_data);
   auto tensor_map_c = make_tma_desc_c(c, kernel_data);
   auto tensor_map_bs = make_tma_desc_bs(bs_, kernel_data);
@@ -141,7 +142,7 @@ Tensor launch_kernel_impl(
       kernel_data.use_tma_a ? to_void_ptr(&tensor_map_a) : to_void_ptr(&a_ptr),
       kernel_data.use_tma_b ? to_void_ptr(&tensor_map_b) : to_void_ptr(&b_ptr),
       kernel_data.use_tma_c ? to_void_ptr(&tensor_map_c) : to_void_ptr(&c_ptr),
-      &as_ptr,
+      kernel_data.use_tma_as ? to_void_ptr(&tensor_map_as) : to_void_ptr(&as_ptr),
       kernel_data.use_tma_bs ? to_void_ptr(&tensor_map_bs) : to_void_ptr(&bs_ptr),
       kernel_data.use_tma_bzp ? to_void_ptr(&tensor_map_bzp) : to_void_ptr(&bzp_ptr),
       kernel_data.use_tma_bias ? to_void_ptr(&tensor_map_bias) : to_void_ptr(&bias_ptr),
@@ -232,7 +233,9 @@ int64_t register_kernel(const std::string &cubin_path, const std::string &func_n
         reader.getBool("IS_TENSOR_WEIGHT_SCALE"),
         reader.getBool("HAS_ZERO_POINT"),
         reader.getBool("HAS_BIAS"),
+        reader.getBool("USE_M_MAJOR_INPUT_SCALE"),
         reader.getBool("USE_TMA_A"),
+        reader.getBool("USE_TMA_AS"),
         reader.getBool("USE_TMA_B"),
         reader.getBool("USE_TMA_C"),
         reader.getBool("USE_TMA_BS"),

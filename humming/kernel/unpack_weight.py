@@ -39,5 +39,5 @@ class UnpackWeightKernel(KernelRuntime):
 
         arg_values = (inputs.data_ptr(), outputs.data_ptr())
 
-        cbd.cuLaunchKernelEx(config, self.kernel, (arg_values, self.arg_types), 0)
+        cbd.cuLaunchKernelEx(config, self.func, (arg_values, self.arg_types), 0)
         return outputs

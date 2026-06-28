@@ -70,6 +70,7 @@ def hadamard_quant_input(
     scale: float = 1.0,
     outputs: torch.Tensor | None = None,
     scales: torch.Tensor | None = None,
+    m_major_scale: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Fused Walsh-Hadamard transform + per-group symmetric quantization.
 
@@ -122,7 +123,12 @@ def hadamard_quant_input(
     else:
         out_shape = inputs.shape
 
-    scales_shape = inputs.shape[:-1] + (last_dim // group_size,)
+    num_groups_total = last_dim // group_size
+    if m_major_scale:
+        m_pad = (inputs.numel() // last_dim + 3) // 4 * 4
+        scales_shape = (num_groups_total, m_pad)
+    else:
+        scales_shape = inputs.shape[:-1] + (num_groups_total,)
     if outputs is None:
         outputs = torch.empty(out_shape, dtype=out_torch_dtype, device=inputs.device)
     else:
@@ -147,6 +153,7 @@ def hadamard_quant_input(
                 block_size=block_size,
                 group_size=group_size,
                 has_extra_scale=(scale != 1.0),
+                m_major=m_major_scale,
             )
         else:
             kernel = HadamardQuantInputKernel(
@@ -155,6 +162,7 @@ def hadamard_quant_input(
                 block_size=block_size,
                 group_size=group_size,
                 has_extra_scale=(scale != 1.0),
+                m_major=m_major_scale,
             )
         kernel(inputs=inputs, outputs=outputs, scales=scales, extra_scale=scale)
 

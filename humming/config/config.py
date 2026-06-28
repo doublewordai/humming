@@ -129,6 +129,7 @@ class LayerConfig(BaseHummingConfig):
 class ComputeConfig(BaseHummingConfig):
     use_f16_accum: bool = False
     use_batch_invariant: bool = False
+    use_m_major_input_scale: bool = False
     gemm_type: GemmType | None = None
 
     _cpp_extra_names: ClassVar[tuple[str, ...]] = (
@@ -170,11 +171,14 @@ class TuningConfig(BaseHummingConfig):
 
     use_tma: bool | None = None
     use_tma_a: bool | None = None
+    use_tma_as: bool | None = None
     use_tma_b: bool | None = None
     use_tma_c: bool | None = None
     use_tma_bs: bool | None = None
     use_tma_bzp: bool | None = None
     use_tma_bias: bool | None = None
+
+    reduce_overlap_last_stage_only: bool = False
 
     num_write_splits: int = 1
     multi_cast_size_a: int = 1
@@ -188,6 +192,7 @@ class TuningConfig(BaseHummingConfig):
 
     _name_map = {
         "use_mbarrier": "kUseMBarrier",
+        "use_tma_as": "kUseTmaAS",
         "use_tma_bs": "kUseTmaBS",
         "use_tma_bzp": "kUseTmaBZP",
     }
@@ -213,6 +218,9 @@ class TuningConfig(BaseHummingConfig):
         else:
             self.num_load_threads = self.num_math_threads
             self.num_threads = self.num_math_threads
+
+        if self.use_tma_as is None:
+            self.use_tma_as = False
 
         for name in dir(self):
             if not name.startswith("use_tma_"):

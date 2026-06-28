@@ -16,10 +16,16 @@
 #define IF_HAS_STAGE_WEIGHT_SCALE(x)
 #endif
 
-#if HUMMING_HAS_ZERO_POINT
-#define IF_HAS_ZERO_POINT(x) x
+#if HUMMING_HAS_ZERO_POINT && !HUMMING_IS_CHANNEL_WEIGHT_SCALE
+#define IF_HAS_STAGE_ZERO_POINT(x) x
 #else
-#define IF_HAS_ZERO_POINT(x)
+#define IF_HAS_STAGE_ZERO_POINT(x)
+#endif
+
+#if HUMMING_HAS_ZERO_POINT && HUMMING_IS_CHANNEL_WEIGHT_SCALE
+#define IF_HAS_CHANNEL_ZERO_POINT(x) x
+#else
+#define IF_HAS_CHANNEL_ZERO_POINT(x)
 #endif
 
 #if HUMMING_IS_CHANNEL_WEIGHT_SCALE
@@ -68,6 +74,12 @@
 #define IF_USE_WARP_SPEC(x) x
 #else
 #define IF_USE_WARP_SPEC(x)
+#endif
+
+#if HUMMING_REDUCE_OVERLAP_LAST_STAGE_ONLY
+#define IF_REDUCE_LAST_STAGE_ONLY(x) x
+#else
+#define IF_REDUCE_LAST_STAGE_ONLY(x)
 #endif
 
 
@@ -126,17 +138,6 @@ public:
   static constexpr uint32_t kChannelSizeBZP = (kIsChannelWeightScale && kHasZeroPoint) ? kSmemStrideBZP : 0;
   static constexpr uint32_t kBiasSize = LayerConfig::kHasBias ? kSmemStrideBias : 0;
 
-  static constexpr uint32_t kTmaAlignmentInt4s = 128 / sizeof(int4);
-  static constexpr uint32_t align_tma_int4s(uint32_t size) {
-    return CEIL_DIV(size, kTmaAlignmentInt4s) * kTmaAlignmentInt4s;
-  }
-  // TMA needs every per-stage shared-memory tile base to be 128B aligned.
-  static constexpr uint32_t kStageSizeAStorage = align_tma_int4s(kStageSizeA);
-  static constexpr uint32_t kStageSizeBStorage = align_tma_int4s(kStageSizeB);
-  static constexpr uint32_t kStageSizeBSStorage = align_tma_int4s(kStageSizeBS);
-  static constexpr uint32_t kStageSizeBZPStorage = align_tma_int4s(
-      kIsChannelWeightScale ? kChannelSizeBZP : kStageSizeBZP);
-
   static constexpr uint32_t kStageBytesA = kStageSizeA * sizeof(int4);
   static constexpr uint32_t kStageBytesB = kStageSizeB * sizeof(int4);
   static constexpr uint32_t kStageBytesAS = kStageSizeAS * sizeof(int4);
@@ -151,18 +152,27 @@ public:
   static constexpr bool kIsIndexedGemm = ComputeConfig::kGemmType == GemmType::INDEXED;
   static constexpr bool kIsGroupedGemm = ComputeConfig::kGemmType == GemmType::GROUPED_CONTIGUOUS || ComputeConfig::kGemmType == GemmType::GROUPED_MASKED;
 
+  struct StageStorage {
+    alignas(1024) int4 a[kStageSizeA];
+    alignas(128) int4 b[kStageSizeB];
+    IF_HAS_STAGE_INPUT_SCALE(alignas(128) int4 as[kStageSizeAS];)
+    IF_HAS_STAGE_WEIGHT_SCALE(alignas(128) int4 bs[kStageSizeBS];)
+    IF_HAS_STAGE_ZERO_POINT(alignas(128) int4 bzp[kStageSizeBZP];)
+  };
+
   union alignas(1024) {
     struct {
-      alignas(1024) int4 a[kNumStages][kStageSizeAStorage];
-      alignas(128) int4 b[kNumStages][kStageSizeBStorage];
-      IF_HAS_STAGE_INPUT_SCALE(int4 as[kNumStages][kStageSizeAS];)
-      IF_HAS_STAGE_WEIGHT_SCALE(alignas(128) int4 bs[kNumStages][kStageSizeBSStorage];)
-      IF_HAS_ZERO_POINT(alignas(128) int4 bzp[kIsChannelWeightScale ? 1 : kNumStages][kStageSizeBZPStorage];)
+      IF_HAS_CHANNEL_ZERO_POINT(alignas(128) int4 bzp_c[kChannelSizeBZP];)
+      StageStorage stages[kNumStages];
       IF_HAS_CHANNEL_WEIGHT_SCALE(alignas(128) int4 bs_c[kChannelSizeBS];)
       IF_HAS_BIAS(alignas(128) int4 bias[kBiasSize];)
-      IF_HAS_CHANNEL_INPUT_SCALE(int4 as_c[kChannelSizeAS];)
+      IF_HAS_CHANNEL_INPUT_SCALE(alignas(128) int4 as_c[kChannelSizeAS];)
     };
-    int4 reduce[MAX(kWarpReduceSize, kBlockOutputSize)];
+    struct {
+      IF_REDUCE_LAST_STAGE_ONLY(IF_HAS_CHANNEL_ZERO_POINT(alignas(128) int4 reduce_skip_bzp_c[kChannelSizeBZP];))
+      IF_REDUCE_LAST_STAGE_ONLY(StageStorage reduce_skip[kNumStages - 1];)
+      alignas(128) int4 reduce[MAX(kWarpReduceSize, kBlockOutputSize)];
+    };
   };
 
   IF_IS_INDEXED_GEMM(uint32_t rd_row_index[BlockShape::M];)

@@ -3,7 +3,7 @@
 #include <humming/utils/all.cuh>
 
 
-template <class MmaOpClass, class BlockShape, class WarpShape, class ElementA, class TuningConfig>
+template <class SharedStorage, class MmaOpClass, class BlockShape, class WarpShape, class ElementA, class TuningConfig>
 class S2RMemoryLoaderA {
 private:
   using MmaShape = typename MmaOpClass::MmaShape;
@@ -16,13 +16,14 @@ private:
 
 public:
   CUDA_INLINE
-  void load(const int4 *smem_ptr, uint32_t *regs_ptr, uint32_t iter_id) {
+  void load(const int4 *smem_ptr, uint32_t *regs_ptr, uint32_t iter_id, uint32_t stage_id = 0) {
     const uint32_t lane_id = threadIdx.x % 32;
     const uint32_t warp_id = threadIdx.x / 32;
     const uint32_t m_iter_id = M_WARPS > 1 ? warp_id / N_WARPS % M_WARPS : 0;
     const uint32_t k_warp_id = warp_id / (M_WARPS * N_WARPS);
     constexpr uint32_t row_stride_m_iter = BlockShape::M / M_WARPS;
-    uint32_t smem = 0;
+    uint32_t smem_uint = offsetof(SharedStorage, stages) + stage_id * sizeof(typename SharedStorage::StageStorage);
+    uint32_t smem_base = smem_uint / 128 % (BlockShape::K * ElementA::kBits == 512 ? 4 : 8);
 
     PRAGMA_UNROLL
     for (uint32_t load_iter_id = 0; load_iter_id < CEIL_DIV(WarpShape::M, 16); load_iter_id++) {
@@ -40,13 +41,13 @@ public:
 
       if constexpr (BlockShape::K * ElementA::kBits > 1024) {
         row = BlockShape::M * (col / 8) + row;
-        col = (col % 8) ^ ((row + smem) % 8);
+        col = (col % 8) ^ ((row + smem_base) % 8);
       } else if constexpr (BlockShape::K * ElementA::kBits == 1024) {
-        col = col ^ ((row + smem) % 8);
+        col = col ^ ((row + smem_base) % 8);
       } else if constexpr (BlockShape::K * ElementA::kBits == 512) {
         col = row % 2 * 4 + col;
         row = row / 2;
-        col = col ^ ((row + smem) % 4);
+        col = col ^ ((row + smem_base) % 4);
       }
 
       uint32_t a_sh_rd = row * 8 + col;

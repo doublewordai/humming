@@ -103,4 +103,4 @@ class RepackWeightKernel(KernelRuntime):
             interleave_mode,
         )
 
-        cbd.cuLaunchKernelEx(config, self.kernel, (arg_values, self.arg_types), 0)
+        cbd.cuLaunchKernelEx(config, self.func, (arg_values, self.arg_types), 0)

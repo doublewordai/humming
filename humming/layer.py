@@ -370,6 +370,7 @@ class HummingLayerMethod:
         layer: HummingModule | torch.nn.Module,
         use_f16_accum: bool = False,
         use_batch_invariant: bool = False,
+        use_m_major_input_scale: bool = False,
         gemm_type: GemmType | str = GemmType.DENSE,
         sublayer_name: str = "",
     ) -> list[Any]:
@@ -380,6 +381,7 @@ class HummingLayerMethod:
             use_f16_accum=use_f16_accum,
             gemm_type=gemm_type,
             use_batch_invariant=use_batch_invariant,
+            use_m_major_input_scale=use_m_major_input_scale,
         )
 
     @classmethod
@@ -501,6 +503,7 @@ class HummingLayerMethod:
         hadamard_block_size: int | None = None,
         input_scale: torch.Tensor | None = None,
         quanted_input: torch.Tensor | None = None,
+        m_major_scale: bool = False,
         sublayer_name: str = "",
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Optionally apply a fast Hadamard rotation, then optionally quantize.
@@ -541,6 +544,7 @@ class HummingLayerMethod:
                 dtype=str(meta.a_dtype),
                 outputs=quanted_input,
                 group_size=meta.input_scale_group_size,
+                m_major_scale=m_major_scale,
             )
             return quanted_input, input_scale
 
@@ -551,6 +555,7 @@ class HummingLayerMethod:
             quant_dtype=str(meta.a_dtype),
             group_size=meta.input_scale_group_size,
             outputs=quanted_input,
+            m_major_scale=m_major_scale,
         )
         return quanted_input, input_scale
 
@@ -574,11 +579,21 @@ class HummingLayerMethod:
     ):
         assert isinstance(layer.humming_metas, dict)
         meta = layer.humming_metas[sublayer_name]
+
+        m_major_scale = False
+        if meta.input_scale_group_size > 0:
+            cc = compute_config
+            if isinstance(cc, str) and cc:
+                cc = json.loads(cc)
+            if isinstance(cc, dict):
+                m_major_scale = bool(cc.get("use_m_major_input_scale", False))
+
         inputs, input_scale = cls.may_hadamard_quant_input(
             layer=layer,
             inputs=inputs,
             hadamard_block_size=hadamard_block_size,
             input_scale=input_scale,
+            m_major_scale=m_major_scale,
             sublayer_name=sublayer_name,
         )
 

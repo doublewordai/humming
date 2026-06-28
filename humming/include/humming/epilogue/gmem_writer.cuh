@@ -91,7 +91,7 @@ public:
     constexpr uint32_t total_write_int4s = BlockShape::M * BlockShape::N * 2 / 16 / kNumWriteSplits;
     constexpr bool is_full_div = total_write_int4s % kNumMathThreads == 0;
     constexpr uint32_t iters = CEIL_DIV(total_write_int4s, kNumMathThreads);
-    uint32_t smem_base = cast_smem_ptr_to_uint(smem_ptr) / 128;
+    uint32_t smem_base = offsetof(SharedStorage, reduce) / 128 % 8;
 
     PRAGMA_UNROLL
     for (uint32_t i = 0; i < iters; i++) {
