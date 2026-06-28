@@ -22,7 +22,7 @@ public:
     const uint32_t m_iter_id = M_WARPS > 1 ? warp_id / N_WARPS % M_WARPS : 0;
     const uint32_t k_warp_id = warp_id / (M_WARPS * N_WARPS);
     constexpr uint32_t row_stride_m_iter = BlockShape::M / M_WARPS;
-    uint32_t smem = cast_smem_ptr_to_uint(smem_ptr) / 128;
+    uint32_t smem = 0;
 
     PRAGMA_UNROLL
     for (uint32_t load_iter_id = 0; load_iter_id < CEIL_DIV(WarpShape::M, 16); load_iter_id++) {

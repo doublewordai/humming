@@ -176,6 +176,28 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
         self.get_kernel_id = module.get_kernel_id
 
     def select_mma_op_class(self):
+        if self.mma_type == MmaType.MXMMA:
+            mma_shape_m, mma_shape_n = 16, 8
+            mma_shape_k = 256 // self.a_dtype.num_bits
+            assert self.warp_shape[0] % mma_shape_m == 0
+            assert self.warp_shape[1] % mma_shape_n == 0
+            assert self.warp_shape[2] % mma_shape_k == 0
+            # scale_vec = number of block scales spanning one mma K-tile.
+            group = self.weight_scale_group_size or mma_shape_k
+            assert mma_shape_k % group == 0
+            scale_vec = mma_shape_k // group
+            return MmaOpClass.from_config(
+                self.mma_type,
+                mma_shape_m,
+                mma_shape_n,
+                mma_shape_k,
+                self.a_dtype,
+                self.b_dtype,
+                dtypes.float32,
+                sf_dtype=self.bs_dtype,
+                scale_vec=scale_vec,
+            )
+
         if self.a_dtype in [dtypes.int4, dtypes.int8]:
             mma_cd_dtype = dtypes.int32
         elif self.use_f16_accum:
@@ -245,6 +267,16 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
             assert self.warp_shape[2] >= 128
 
     def check_scale(self):
+        if self.mma_type == MmaType.MXMMA:
+            mma_k = 256 // self.a_dtype.num_bits
+            for gs in (self.input_scale_group_size, self.weight_scale_group_size):
+                if gs > 0:
+                    assert mma_k % gs == 0
+                    assert mma_k // gs in (1, 2, 4)
+            if self.input_scale_group_size > 0 and self.weight_scale_group_size > 0:
+                assert self.input_scale_group_size == self.weight_scale_group_size
+            return
+
         if self.input_scale_group_size > 0:
             assert self.input_scale_group_size >= 256 // self.a_dtype.num_bits
         if self.weight_scale_group_size > 0:

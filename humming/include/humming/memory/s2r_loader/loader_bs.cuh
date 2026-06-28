@@ -12,6 +12,7 @@ class S2RMemoryLoaderBS {
 private:
   static constexpr uint32_t kNumThreads = TuningConfig::kNumThreads;
   static constexpr bool kUseWgmma = MmaOpClass::kMmaType == MmaType::WGMMA;
+  static constexpr bool kUseMxmma = MmaOpClass::kMmaType == MmaType::MXMMA;
 
   static constexpr bool kIsChannel = LayerConfig::kIsChannelWeightScale;
   static constexpr bool kIsGroup = LayerConfig::kIsGroupWeightScale;
@@ -39,8 +40,36 @@ private:
   static constexpr uint32_t kLoadItersPerGroup = CEIL_DIV(kNumBytesPerThread, sizeof(LoadType));
   static constexpr uint32_t kSmemStride = BlockShape::N * ElementBS::kBits / 32 / 4;
   static constexpr uint32_t kSmemStrideLoadType = kSmemStride * 16 / sizeof(LoadType);
+  static constexpr uint32_t kScaleVec = kPartMmaShapeK / kGroupSize;
 
 public:
+  CUDA_INLINE
+  void load_sf(const int4 *smem_ptr, uint32_t *regs_ptr, int32_t iter_id) {
+    const uint32_t *smem_ptr_load = reinterpret_cast<const uint32_t *>(smem_ptr);
+    uint32_t warp_id = threadIdx.x / 32;
+    uint32_t lane_id = threadIdx.x % 32;
+
+    uint32_t col_in_tile = lane_id / 4;
+    uint32_t k_warp_base = (warp_id / (M_WARPS * N_WARPS)) * WarpShape::K + iter_id * kPartMmaShapeK;
+    uint32_t group_base = k_warp_base / kGroupSize / (kScaleVec == 1 ? 2 : 4);
+    uint32_t n_warp_base = (warp_id % N_WARPS) * WarpShape::N;
+
+    if constexpr (kScaleVec == 1 && WarpShape::N == 16) {
+      uint32_t s_sh_rd = lane_id / 4;
+      regs_ptr[0] = smem_ptr_load[group_base * (BlockShape::N / 2) + (warp_id % N_WARPS) * (WarpShape::N / 2) + s_sh_rd];
+    } else if constexpr (WarpShape::N == 32 && kScaleVec == 1 || WarpShape::N == 16) {
+      uint32_t s_sh_rd = (lane_id / 2) % 2 * 8 + lane_id / 4;
+      regs_ptr[0] = smem_ptr_load[group_base * WarpShape::N + n_warp_base + s_sh_rd];
+    } else {
+      uint32_t s_sh_rd = lane_id % 4 * 8 + lane_id / 4;
+
+      PRAGMA_UNROLL
+      for (uint32_t i = 0; i < WarpShape::N / (kScaleVec == 1 ? 64 : 32); i++) {
+        regs_ptr[i] = smem_ptr_load[group_base * BlockShape::N + i * 32 + n_warp_base + s_sh_rd];
+      }
+    }
+  }
+
   CUDA_INLINE
   void load(const int4 *smem_ptr, uint32_t *regs_ptr, int32_t iter_id) {
     if constexpr (kIsBlock) {

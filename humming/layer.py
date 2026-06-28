@@ -80,6 +80,8 @@ class HummingLayerMeta(LayerConfig):
             return self.weight_scale_group_size == 0 or self.a_dtype.num_bits != 16
         elif self.mma_type == MmaType.WGMMA:
             return self.weight_scale_group_size == 0
+        elif self.mma_type == MmaType.MXMMA:
+            return False
         else:
             raise ValueError(f"unsupported mma_type: {self.mma_type}")
 
@@ -435,10 +437,17 @@ class HummingLayerMethod:
         )
 
         if weight_scale is not None:
+            is_mxmma = meta.mma_type == MmaType.MXMMA
+            mxmma_scale_vec = None
+            if is_mxmma:
+                mxmma_scale_vec = 256 // meta.a_dtype.num_bits // meta.weight_scale_group_size
+
             weight_scale = prepare_humming_weight_scale(
                 weight_scale,
                 to_apply_on_c=meta.should_apply_bs_on_c,
                 is_blockwise=meta.weight_scale_type == WeightScaleType.BLOCK,
+                is_mxmma=is_mxmma,
+                mxmma_scale_vec=mxmma_scale_vec,
             )
 
         if zero_point is not None:

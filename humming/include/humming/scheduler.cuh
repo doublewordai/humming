@@ -26,6 +26,9 @@ private:
   static constexpr uint32_t kWeightScaleGroupSize = LayerConfig::kWeightScaleGroupSize > 0 ? LayerConfig::kWeightScaleGroupSize : 1;
   static constexpr uint32_t kMaxGroupSize = MAX(kInputScaleGroupSize, kWeightScaleGroupSize);
 
+  static constexpr bool kUseMxmma = LayerConfig::kMmaType == MmaType::MXMMA;
+  static constexpr uint32_t kAsBlocksPerWord = kUseMxmma ? MAX(1u, 4 * kInputScaleGroupSize / BlockShape::K) : 1;
+
   static constexpr uint32_t N_BLOCKS = ProblemShape::N / BlockShape::N / kMultiCastSizeA;
   static constexpr uint32_t K_BLOCKS = ProblemShape::K / BlockShape::K;
 
@@ -109,7 +112,7 @@ public:
 
       streamk_mnk_total_iters = CEIL_DIV(streamk_mnk_blocks, kNumCtaGroups);
 
-      constexpr int32_t blocks_per_group = kMaxGroupSize / BlockShape::K;
+      constexpr int32_t blocks_per_group = MAX(kMaxGroupSize / BlockShape::K, kAsBlocksPerWord);
 
       if constexpr (blocks_per_group > 1) {
         streamk_mnk_total_iters = blocks_per_group * CEIL_DIV(streamk_mnk_total_iters, blocks_per_group);
@@ -197,16 +200,16 @@ public:
     if (dp_mn_iters) {
       slice_iters = K_BLOCKS;
 
-      // constexpr uint32_t kRasterGroupN = 16;
-      // uint32_t _ras_full_group = kRasterGroupN * m_blocks;
-      // uint32_t _ras_group = dp_mn_next_index / _ras_full_group;
-      // uint32_t _ras_in_group = dp_mn_next_index % _ras_full_group;
-      // uint32_t _ras_n0 = _ras_group * kRasterGroupN;
-      // uint32_t _ras_gn = (N_BLOCKS - _ras_n0) < kRasterGroupN ? (N_BLOCKS - _ras_n0) : kRasterGroupN;
-      // m_block_id = _ras_in_group / _ras_gn;
-      // n_block_id = _ras_n0 + _ras_in_group % _ras_gn;
-      m_block_id = dp_mn_next_index / N_BLOCKS;
-      n_block_id = dp_mn_next_index % N_BLOCKS;
+      constexpr uint32_t kRasterGroupN = 8;
+      uint32_t _ras_full_group = kRasterGroupN * m_blocks;
+      uint32_t _ras_group = dp_mn_next_index / _ras_full_group;
+      uint32_t _ras_in_group = dp_mn_next_index % _ras_full_group;
+      uint32_t _ras_n0 = _ras_group * kRasterGroupN;
+      uint32_t _ras_gn = (N_BLOCKS - _ras_n0) < kRasterGroupN ? (N_BLOCKS - _ras_n0) : kRasterGroupN;
+      m_block_id = _ras_in_group / _ras_gn;
+      n_block_id = _ras_n0 + _ras_in_group % _ras_gn;
+      // m_block_id = dp_mn_next_index / N_BLOCKS;
+      // n_block_id = dp_mn_next_index % N_BLOCKS;
 
       if constexpr (kMultiCastSizeB > 1) {
         m_block_id = m_block_id * kMultiCastSizeB + cluster_rank;
@@ -236,8 +239,14 @@ public:
     if (!streamk_mnk_iters) return false;
     uint32_t streamk_mn_index = streamk_mnk_next_index / K_BLOCKS;
 
-    m_block_id = streamk_mn_index / N_BLOCKS;
-    n_block_id = streamk_mn_index % N_BLOCKS;
+    constexpr uint32_t kRasterGroupN = 8;
+    uint32_t _ras_full_group = kRasterGroupN * m_blocks;
+    uint32_t _ras_group = streamk_mn_index / _ras_full_group;
+    uint32_t _ras_in_group = streamk_mn_index % _ras_full_group;
+    uint32_t _ras_n0 = _ras_group * kRasterGroupN;
+    uint32_t _ras_gn = (N_BLOCKS - _ras_n0) < kRasterGroupN ? (N_BLOCKS - _ras_n0) : kRasterGroupN;
+    m_block_id = _ras_in_group / _ras_gn;
+    n_block_id = _ras_n0 + _ras_in_group % _ras_gn;
     if constexpr (kMultiCastSizeB > 1) {
       m_block_id = m_block_id * kMultiCastSizeB + cluster_rank;
     } else if constexpr (kMultiCastSizeA > 1) {

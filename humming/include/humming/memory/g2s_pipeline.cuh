@@ -11,7 +11,7 @@
 
 
 template <
-    class SharedStorage,
+    class MmaOpClass, class SharedStorage,
     class ProblemShape, class BlockShape, class PadShape,
     class ElementA, class ElementB, class ElementBS,
     class LayerConfig, class ComputeConfig, class TuningConfig>
@@ -106,7 +106,7 @@ public:
   using LoaderA = G2SMemoryLoaderA<SharedStorage, ProblemShape, BlockShape, PadShape, ElementA, ComputeConfig, TuningConfig>;
   using LoaderB = G2SMemoryLoaderB<ProblemShape, BlockShape, ElementA, ElementB, ComputeConfig, TuningConfig>;
   using LoaderAS = G2SMemoryLoaderAS<SharedStorage, ProblemShape, BlockShape, PadShape, ElementA, LayerConfig, ComputeConfig, TuningConfig>;
-  using LoaderBS = G2SMemoryLoaderBS<ProblemShape, BlockShape, ElementBS, LayerConfig, TuningConfig>;
+  using LoaderBS = G2SMemoryLoaderBS<MmaOpClass, ProblemShape, BlockShape, ElementBS, LayerConfig, TuningConfig>;
   using LoaderBZP = G2SMemoryLoaderBZP<ProblemShape, BlockShape, ElementB, LayerConfig, TuningConfig>;
   using LoaderBias = G2SMemoryLoaderBias<ProblemShape, BlockShape, TuningConfig>;
 

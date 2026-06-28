@@ -256,9 +256,25 @@ def prepare_humming_weight_scale(
     weight_scale: torch.Tensor,
     to_apply_on_c: bool = False,
     is_blockwise: bool = False,
+    is_mxmma: bool = False,
+    mxmma_scale_vec: int = 4,
 ) -> torch.Tensor:
     if is_blockwise:
         return weight_scale.transpose(-1, -2).contiguous()
+
+    if is_mxmma:
+        if mxmma_scale_vec == 1:
+            ws = weight_scale.view(torch.uint8)
+            lead = ws.shape[:-2]
+            n, g = ws.shape[-2:]
+            ws = ws.reshape(*lead, n // 16, 2, 8, g // 2, 2)
+            ndim = len(lead)
+            perm = (*range(ndim), ndim + 3, ndim + 0, ndim + 2, ndim + 1, ndim + 4)
+            ws = ws.permute(*perm).contiguous()
+            ws = ws.reshape(*lead, g // 2, n // 2, 4)
+            return ws.view(torch.int32).squeeze(-1).contiguous()
+
+        return weight_scale.view(torch.int32).transpose(-1, -2).contiguous()
 
     if to_apply_on_c:
         perm = [0, 1, 8, 9, 16, 17, 24, 25]

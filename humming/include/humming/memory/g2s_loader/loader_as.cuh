@@ -10,6 +10,7 @@ template <
     class LayerConfig, class ComputeConfig, class TuningConfig>
 class G2SMemoryLoaderAS {
 private:
+  static constexpr bool kUseMxmma = LayerConfig::kMmaType == MmaType::MXMMA;
   static constexpr bool kUseWarpSpec = TuningConfig::kUseWarpSpec;
   static constexpr bool kUseCpAsync = TuningConfig::kUseCpAsync;
   static constexpr bool kIsDenseGemm = ComputeConfig::kGemmType == GemmType::DENSE;
@@ -25,9 +26,11 @@ private:
   static constexpr uint32_t kGroupSize = kIsGroupScale ? LayerConfig::kInputScaleGroupSize : ProblemShape::K;
 
   static_assert(ProblemShape::K == kGroupSize || (ProblemShape::K - PadShape::K) % kGroupSize == 0);
+  static constexpr uint32_t kPartMmaShapeK = 256 / ElementA::kBits;
   static constexpr uint32_t kProblemNumGroups = CEIL_DIV(ProblemShape::K - PadShape::K, kGroupSize);
   static constexpr uint32_t kNumGroups = CEIL_DIV(BlockShape::K, kGroupSize);
-  static constexpr uint32_t kLoadsPerGroup = CEIL_DIV(kGroupSize, BlockShape::K);
+  static constexpr uint32_t kMxScaleVec = kPartMmaShapeK / kGroupSize;
+  static constexpr uint32_t kLoadsPerGroup = kUseMxmma ? MAX(1u, 4 / kNumGroups) : CEIL_DIV(kGroupSize, BlockShape::K);
 
   using LoadType = typename LoadTypeChooser<kNumGroups * 4>::Type;
 
@@ -44,6 +47,7 @@ public:
   uint32_t load_row_index;
   uint32_t col_offset = 0;
   uint32_t counter = 0;
+  const uint8_t *mx_gmem_ptr;
 
   CUDA_INLINE
   G2SMemoryLoaderAS(const void *ptr, SharedStorage &smem, uint32_t shape_m)
@@ -54,8 +58,47 @@ public:
   template <bool kShouldAdvance = true>
   CUDA_INLINE void load(void *smem_ptr, void *mbar_ptr) {
     counter = kLoadsPerGroup != 1 ? (counter + 1) % kLoadsPerGroup : 0;
-    load_legacy(smem_ptr);
+    if constexpr (kUseMxmma) {
+      load_mx_legacy(smem_ptr);
+    } else {
+      load_legacy(smem_ptr);
+    }
     if constexpr (kShouldAdvance) advance();
+  }
+
+  CUDA_INLINE void load_mx_legacy(void *smem_ptr) {
+    uint32_t *smem_ptr_load = reinterpret_cast<uint32_t *>(smem_ptr);
+    const uint32_t *gmem_ptr_load = reinterpret_cast<const uint32_t *>(gmem_ptr);
+
+    constexpr uint32_t kNumRows = CEIL_DIV(BlockShape::K / kPartMmaShapeK * kMxScaleVec, 4);
+    constexpr uint32_t kMxGmemStride = ProblemShape::K / kPartMmaShapeK * kMxScaleVec / 4;
+    constexpr uint32_t kNumInts = BlockShape::M * kNumRows;
+
+    if constexpr (kNumInts <= kNumLoadThreads) {
+      uint32_t smem_offset = thread_id;
+      uint32_t smem_row = smem_offset / BlockShape::M;
+      uint32_t smem_col = smem_offset % BlockShape::M;
+
+      uint32_t gmem_row = smem_col;
+      uint32_t gmem_col = smem_row;
+      uint32_t gmem_offset = gmem_row * kMxGmemStride + gmem_col;
+      uint32_t pred = thread_id < kNumInts;
+
+      legacy_load_pred<kUseCpAsync>(gmem_ptr_load + gmem_offset, smem_ptr_load + smem_offset, pred);
+    } else {
+      PRAGMA_UNROLL
+      for (uint32_t i = 0; i < kNumRows; i++) {
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < CEIL_DIV(BlockShape::M, kNumLoadThreads); j++) {
+          uint32_t m_index = j * kNumLoadThreads + thread_id;
+          uint32_t gmem_offset = m_index * kMxGmemStride + i;
+          uint32_t smem_offset = i * BlockShape::M + m_index;
+          uint32_t pred = m_index < block_shape_m;
+
+          legacy_load_pred<kUseCpAsync>(gmem_ptr_load + gmem_offset, smem_ptr_load + smem_offset, pred);
+        }
+      }
+    }
   }
 
   CUDA_INLINE void load_legacy(void *smem_ptr) {
@@ -94,7 +137,7 @@ public:
   void advance() {
     if (kIsGroupScale && (kLoadsPerGroup == 1 || counter == 0)) {
       col_offset += kNumGroups;
-      gmem_ptr += kNumGroups;
+      gmem_ptr += kUseMxmma ? CEIL_DIV(kNumGroups, 4) : kNumGroups;
     }
   }
 
@@ -118,7 +161,9 @@ public:
     }
     block_shape_m = MIN((shape_m - row_offset), BlockShape::M);
     if constexpr (!kIsIndexedGemm) {
-      gmem_ptr = gmem_ptr_raw + ((row_offset * kProblemNumGroups) + col_offset);
+      uint32_t k_word_offset = kUseMxmma ? col_offset / 4 : col_offset;
+      uint32_t row_stride = kUseMxmma ? kProblemNumGroups / 4 : kProblemNumGroups;
+      gmem_ptr = gmem_ptr_raw + ((row_offset * row_stride) + k_word_offset);
     } else {
       gmem_ptr = gmem_ptr_raw + col_offset;
 

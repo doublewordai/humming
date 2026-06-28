@@ -71,10 +71,14 @@ def quant_tensor_x2(tensor1, tensor2, dtype):
         tensor = tensor.to(tl.uint8)
     elif dtype == "float4e2m1":
         tensor = tl.inline_asm_elementwise(
-            asm="cvt.rn.satfinite.e2m1x2.f32 $0, $1, $2;",
-            constraints="=r,f,f",
+            asm="""{
+            .reg .b8 t;
+            cvt.rn.satfinite.e2m1x2.f32 t, $2, $1;
+            cvt.u16.u8 $0, t;
+            }""",
+            constraints="=h,f,f",
             args=[tensor1, tensor2],
-            dtype=tl.int32,
+            dtype=tl.int16,
             is_pure=True,
             pack=1,
         )

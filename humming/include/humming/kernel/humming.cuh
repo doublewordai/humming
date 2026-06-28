@@ -9,6 +9,7 @@
 #include <humming/epilogue/pipeline.cuh>
 #include <humming/memory/g2s_pipeline.cuh>
 #include <humming/memory/s2r_pipeline.cuh>
+#include <humming/mma/mxmma.cuh>
 #include <humming/mma/wgmma.cuh>
 #include <humming/mma/wmma.cuh>
 
@@ -56,7 +57,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       SharedStorage, ProblemShape, BlockShape,
       LayerConfig, ComputeConfig, TuningConfig>;
   using ProducerPipeline = ProducerPipeline<
-      SharedStorage, ProblemShape, BlockShape, PadShape, ElementA, ElementB, ElementBS,
+      MmaOpClass, SharedStorage, ProblemShape, BlockShape, PadShape, ElementA, ElementB, ElementBS,
       LayerConfig, ComputeConfig, TuningConfig>;
   using ConsumerPipeline = ConsumerPipeline<SharedStorage, ElementA, LayerConfig, TuningConfig>;
   using MainloopArithmetic = MainloopArithmetic<
@@ -68,7 +69,10 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       LayerConfig, TuningConfig>;
   using WMMA = WMMA<MmaOpClass, SharedStorage, MainloopArithmetic, WarpShape, ElementA, ElementB, LayerConfig>;
   using WGMMA = WGMMA<MmaOpClass, SharedStorage, MainloopArithmetic, BlockShape, WarpShape, ElementA, ElementB, LayerConfig>;
-  using MMA = std::conditional_t<MmaOpClass::kMmaType == MmaType::WGMMA, WGMMA, WMMA>;
+  using MXMMA = MXMMA<MmaOpClass, SharedStorage, MainloopArithmetic, WarpShape, BlockShape, ElementA, ElementB, LayerConfig>;
+  using MMA = std::conditional_t<
+      MmaOpClass::kMmaType == MmaType::WGMMA, WGMMA,
+      std::conditional_t<MmaOpClass::kMmaType == MmaType::MXMMA, MXMMA, WMMA>>;
   using Epilogue = EpiloguePipeline<
       MmaOpClass, SharedStorage, EpilogueArithmetic, ProblemShape, BlockShape, WarpShape, PadShape,
       ElementA, ElementC, LayerConfig, ComputeConfig, TuningConfig>;

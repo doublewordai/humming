@@ -9,6 +9,7 @@
 #include <humming/epilogue/pipeline.cuh>
 #include <humming/memory/g2s_pipeline.cuh>
 #include <humming/memory/s2r_pipeline.cuh>
+#include <humming/mma/mxmma.cuh>
 #include <humming/mma/wgmma.cuh>
 #include <humming/mma/wmma.cuh>
 
@@ -56,7 +57,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       SharedStorage, ProblemShape, BlockShape,
       LayerConfig, ComputeConfig, TuningConfig>;
   using ProducerPipeline = ProducerPipeline<
-      SharedStorage, ProblemShape, BlockShape, PadShape, ElementA, ElementB, ElementBS,
+      MmaOpClass, SharedStorage, ProblemShape, BlockShape, PadShape, ElementA, ElementB, ElementBS,
       LayerConfig, ComputeConfig, TuningConfig>;
   using ConsumerPipeline = ConsumerPipeline<SharedStorage, ElementA, LayerConfig, TuningConfig>;
   using MainloopArithmetic = MainloopArithmetic<
@@ -68,7 +69,10 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       LayerConfig, TuningConfig>;
   using WMMA = WMMA<MmaOpClass, SharedStorage, MainloopArithmetic, WarpShape, ElementA, ElementB, LayerConfig>;
   using WGMMA = WGMMA<MmaOpClass, SharedStorage, MainloopArithmetic, BlockShape, WarpShape, ElementA, ElementB, LayerConfig>;
-  using MMA = std::conditional_t<MmaOpClass::kMmaType == MmaType::WGMMA, WGMMA, WMMA>;
+  using MXMMA = MXMMA<MmaOpClass, SharedStorage, MainloopArithmetic, WarpShape, BlockShape, ElementA, ElementB, LayerConfig>;
+  using MMA = std::conditional_t<
+      MmaOpClass::kMmaType == MmaType::WGMMA, WGMMA,
+      std::conditional_t<MmaOpClass::kMmaType == MmaType::MXMMA, MXMMA, WMMA>>;
   using Epilogue = EpiloguePipeline<
       MmaOpClass, SharedStorage, EpilogueArithmetic, ProblemShape, BlockShape, WarpShape, PadShape,
       ElementA, ElementC, LayerConfig, ComputeConfig, TuningConfig>;
@@ -106,7 +110,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       producer.wait_math_epilogue();
       producer.load_stage<true, true>(0);
       PRAGMA_UNROLL
-      for (uint32_t stage_id = 1; stage_id < kNumStages - 1; stage_id++) {
+      for (uint32_t stage_id = 1; stage_id < MAX(kNumStages - 1, 2); stage_id++) {
         producer.load_stage(stage_id, stage_id < slice_iters);
       };
 
@@ -115,7 +119,11 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
         for (uint32_t stage_id = 0; stage_id < kNumStages; stage_id++) {
           if (slice_iters == 1) producer.load_channel();
           producer.wait_stage(stage_id);
-          producer.load_stage(stage_id + kNumStages - 1, slice_iters >= kNumStages);
+          if constexpr (kNumStages == 2) {
+            producer.load_stage(stage_id, slice_iters > kNumStages);
+          } else {
+            producer.load_stage(stage_id + kNumStages - 1, slice_iters >= kNumStages);
+          }
           slice_iters--;
           if (!slice_iters) break;
         }

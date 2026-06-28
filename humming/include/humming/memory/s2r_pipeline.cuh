@@ -15,6 +15,7 @@ template <
 class S2RMemoryPipeline {
 private:
   static constexpr bool kUseWgmma = MMA::MmaOpClass::kMmaType == MmaType::WGMMA;
+  static constexpr bool kUseMxmma = MMA::MmaOpClass::kMmaType == MmaType::MXMMA;
   static constexpr uint32_t kPartMmaShapeK = 256 / ElementA::kBits;
   static constexpr uint32_t kWarpItersK = WarpShape::K / kPartMmaShapeK;
   static constexpr uint32_t kNumStages = TuningConfig::kNumStages;
@@ -63,10 +64,17 @@ public:
     loader_b.load(smem.b[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);
     if constexpr (!kUseWgmma)
       loader_a.load(smem.a[stage_id], mma.regs_a_as_ptr(buffer_id), iter_id);
-    if constexpr (kIsGroupInputScale)
-      loader_as.load(smem.as[stage_id], mma.arith.regs_as_as_ptr(buffer_id), iter_id);
-    if constexpr (kIsGroupOrBlockWeightScale)
-      loader_bs.load(smem.bs[stage_id], mma.arith.regs_bs_as_ptr(buffer_id), iter_id);
+    if constexpr (kUseMxmma) {
+      if constexpr (kIsGroupInputScale)
+        loader_as.load_sf(smem.as[stage_id], mma.regs_sfa_as_ptr(buffer_id), iter_id);
+      if constexpr (kIsGroupOrBlockWeightScale)
+        loader_bs.load_sf(smem.bs[stage_id], mma.regs_sfb_as_ptr(buffer_id), iter_id);
+    } else {
+      if constexpr (kIsGroupInputScale)
+        loader_as.load(smem.as[stage_id], mma.arith.regs_as_as_ptr(buffer_id), iter_id);
+      if constexpr (kIsGroupOrBlockWeightScale)
+        loader_bs.load(smem.bs[stage_id], mma.arith.regs_bs_as_ptr(buffer_id), iter_id);
+    }
     if constexpr (kHasZeroPoint && (kIsGroupOrBlockWeightScale || kIsFirst))
       loader_bzp.load(smem.bzp[stage_id], mma.arith.regs_zp_as_ptr(buffer_id), iter_id);
   }
