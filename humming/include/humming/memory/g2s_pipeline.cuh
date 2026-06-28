@@ -188,16 +188,19 @@ public:
     if (pred) {
       uint64_t *mbar_ptr = nullptr;
       if constexpr (kUseMBarrier) mbar_ptr = &smem.load_mbar[mbar_index];
-      loader_a.template load<kShouldAdvance>(smem.a[stage_id], mbar_ptr);
-      loader_b.template load<kShouldAdvance>(smem.b[stage_id], mbar_ptr);
+      loader_a.template load<kShouldAdvance>(smem.stages[stage_id].a, mbar_ptr);
+      loader_b.template load<kShouldAdvance>(smem.stages[stage_id].b, mbar_ptr);
       if constexpr (kIsGroupInputScale) {
-        loader_as.template load<kShouldAdvance>(smem.as[stage_id], mbar_ptr);
+        loader_as.template load<kShouldAdvance>(smem.stages[stage_id].as, mbar_ptr);
       };
       if constexpr (kIsGroupWeightScale || kIsBlockWeightScale) {
-        loader_bs.template load<kShouldAdvance>(smem.bs[stage_id], mbar_ptr);
+        loader_bs.template load<kShouldAdvance>(smem.stages[stage_id].bs, mbar_ptr);
       };
       if constexpr (kHasZeroPoint && (kIsGroupWeightScale || kIsFirst)) {
-        loader_bzp.template load<kShouldAdvance>(smem.bzp[stage_id], mbar_ptr);
+        if constexpr (kIsChannelWeightScale)
+          loader_bzp.template load<kShouldAdvance>(smem.bzp_c, mbar_ptr);
+        else
+          loader_bzp.template load<kShouldAdvance>(smem.stages[stage_id].bzp, mbar_ptr);
       }
       load_bytes = get_stage_load_bytes<kIsFirst>();
     }

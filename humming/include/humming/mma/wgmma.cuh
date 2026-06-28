@@ -106,7 +106,7 @@ public:
 
     PRAGMA_UNROLL
     for (uint32_t k = 0; k < kPartMmaShapeK / MmaShape::K; k++) {
-      int4 *smem_ptr = smem.a[stage_id] + smem_offset + iter_id * 2 + k;
+      int4 *smem_ptr = smem.stages[stage_id].a + smem_offset + iter_id * 2 + k;
       uint64_t desc = make_wgmma_smem_desc<kSwizzleBytes>(smem_ptr, iter_id);
 
       constexpr uint32_t kNumIters = WarpShape::N / (MmaShape::N / 4);

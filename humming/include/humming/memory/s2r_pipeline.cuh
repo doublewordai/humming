@@ -60,15 +60,19 @@ public:
     iter_id = iter_id % kWarpItersK;
     uint32_t buffer_id = iter_id % 2;
 
-    loader_b.load(smem.b[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);
+    loader_b.load(smem.stages[stage_id].b, mma.regs_qb_as_ptr(buffer_id), iter_id);
     if constexpr (!kUseWgmma)
-      loader_a.load(smem.a[stage_id], mma.regs_a_as_ptr(buffer_id), iter_id);
+      loader_a.load(smem.stages[stage_id].a, mma.regs_a_as_ptr(buffer_id), iter_id);
     if constexpr (kIsGroupInputScale)
-      loader_as.load(smem.as[stage_id], mma.arith.regs_as_as_ptr(buffer_id), iter_id);
+      loader_as.load(smem.stages[stage_id].as, mma.arith.regs_as_as_ptr(buffer_id), iter_id);
     if constexpr (kIsGroupOrBlockWeightScale)
-      loader_bs.load(smem.bs[stage_id], mma.arith.regs_bs_as_ptr(buffer_id), iter_id);
-    if constexpr (kHasZeroPoint && (kIsGroupOrBlockWeightScale || kIsFirst))
-      loader_bzp.load(smem.bzp[stage_id], mma.arith.regs_zp_as_ptr(buffer_id), iter_id);
+      loader_bs.load(smem.stages[stage_id].bs, mma.arith.regs_bs_as_ptr(buffer_id), iter_id);
+    if constexpr (kHasZeroPoint && (kIsGroupOrBlockWeightScale || kIsFirst)) {
+      if constexpr (kIsChannelWeightScale)
+        loader_bzp.load(smem.bzp_c, mma.arith.regs_zp_as_ptr(buffer_id), iter_id);
+      else
+        loader_bzp.load(smem.stages[stage_id].bzp, mma.arith.regs_zp_as_ptr(buffer_id), iter_id);
+    }
   }
 
   CUDA_INLINE void load_channel(uint32_t slice_id) {

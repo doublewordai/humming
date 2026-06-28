@@ -48,6 +48,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
 
   constexpr uint32_t kNumThreads = TuningConfig::kNumThreads;
   constexpr uint32_t kNumStages = TuningConfig::kNumStages;
+  constexpr bool kReduceOverlapLastStageOnly = TuningConfig::kReduceOverlapLastStageOnly;
 
   using SharedStorage = SharedStorage<
       MmaOpClass, BlockShape, WarpShape, ElementA, ElementB, ElementBS,
@@ -177,9 +178,11 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
 
       consumer.wait_channel();
       s2r_pipe.load_channel(scheduler.slice_id);
+
+      if constexpr (kReduceOverlapLastStageOnly) consumer.arrive(kNumStages);
       epilogue.call(mma.final_regs_c_as_ptr());
       if constexpr (TuningConfig::kUseTmaC) tma_wait_store_group<0, true>();
-      consumer.arrive(kNumStages);
+      if constexpr (!kReduceOverlapLastStageOnly) consumer.arrive(kNumStages);
     }
   }
 

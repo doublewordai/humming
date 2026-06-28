@@ -151,6 +151,8 @@ class TuningConfig(BaseHummingConfig):
     use_tma_bzp: bool | None = None
     use_tma_bias: bool | None = None
 
+    reduce_overlap_last_stage_only: bool = False
+
     num_write_splits: int = 1
     multi_cast_size_a: int = 1
     multi_cast_size_b: int = 1
