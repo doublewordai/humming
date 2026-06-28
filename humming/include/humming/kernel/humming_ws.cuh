@@ -31,7 +31,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     const __grid_constant__ typename KernelTensorParamType<TuningConfig::kUseTmaA>::Type A,
     const __grid_constant__ typename KernelTensorParamType<TuningConfig::kUseTmaB>::Type B,
     const __grid_constant__ typename KernelTensorParamType<TuningConfig::kUseTmaC>::Type C,
-    const uint32_t *AS,
+    const __grid_constant__ typename KernelTensorParamType<TuningConfig::kUseTmaAS>::Type AS,
     const __grid_constant__ typename KernelTensorParamType<TuningConfig::kUseTmaBS>::Type BS,
     const __grid_constant__ typename KernelTensorParamType<TuningConfig::kUseTmaBZP>::Type BZP,
     const __grid_constant__ typename KernelTensorParamType<TuningConfig::kUseTmaBias>::Type Bias,
@@ -74,7 +74,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       ElementA, ElementC, LayerConfig, ComputeConfig, TuningConfig>;
   using S2RMemoryPipeline = S2RMemoryPipeline<
       SharedStorage, MMA, Epilogue, BlockShape, WarpShape, ElementA, ElementB, ElementBS,
-      LayerConfig, TuningConfig>;
+      LayerConfig, ComputeConfig, TuningConfig>;
 
   extern __shared__ int4 shared_memory[];
   auto &smem = *reinterpret_cast<SharedStorage *>(shared_memory);
@@ -82,7 +82,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
   auto pa = [&]() {if constexpr (TuningConfig::kUseTmaA) return &A; else return A; };
   auto pb = [&]() {if constexpr (TuningConfig::kUseTmaB) return &B; else return B; };
   auto pc = [&]() {if constexpr (TuningConfig::kUseTmaC) return &C; else return C; };
-  auto pas = [&]() { return AS; };
+  auto pas = [&]() {if constexpr (TuningConfig::kUseTmaAS) return &AS; else return AS; };
   auto pbs = [&]() {if constexpr (TuningConfig::kUseTmaBS) return &BS; else return BS; };
   auto pbzp = [&]() {if constexpr (TuningConfig::kUseTmaBZP) return &BZP; else return BZP; };
   auto pbias = [&]() {if constexpr (TuningConfig::kUseTmaBias) return &Bias; else return Bias; };

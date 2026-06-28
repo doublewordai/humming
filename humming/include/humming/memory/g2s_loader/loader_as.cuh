@@ -22,6 +22,10 @@ private:
   static constexpr bool kHasInputScale = ElementA::kBits != 16;
   static constexpr bool kIsChannelScale = kHasInputScale && LayerConfig::kInputScaleGroupSize == 0;
   static constexpr bool kIsGroupScale = kHasInputScale && LayerConfig::kInputScaleGroupSize > 0;
+  static constexpr bool kMMajorInputScale = ComputeConfig::kUseMMajorInputScale && kIsGroupScale;
+  static_assert(!kMMajorInputScale || !kIsIndexedGemm);
+  static constexpr bool kUseTma = TuningConfig::kUseTmaAS && kHasInputScale && !kIsIndexedGemm;
+  static_assert(!kUseTma || kMMajorInputScale || kIsChannelScale);
   static constexpr uint32_t kGroupSize = kIsGroupScale ? LayerConfig::kInputScaleGroupSize : ProblemShape::K;
 
   static_assert(ProblemShape::K == kGroupSize || (ProblemShape::K - PadShape::K) % kGroupSize == 0);
@@ -39,6 +43,7 @@ public:
   const uint32_t *gmem_ptr;
 
   uint32_t shape_m;
+  uint32_t total_shape_m;
   uint32_t block_shape_m;
   uint32_t row_offset;
   uint32_t load_row_index;
@@ -47,15 +52,41 @@ public:
 
   CUDA_INLINE
   G2SMemoryLoaderAS(const void *ptr, SharedStorage &smem, uint32_t shape_m)
-      : smem(smem), shape_m(shape_m) {
-    gmem_ptr_raw = reinterpret_cast<const uint32_t *>(ptr);
+      : smem(smem), shape_m(shape_m), total_shape_m((shape_m + 3u) & ~3u) {
+    if constexpr (kUseTma) {
+      tensor_map_ptr = reinterpret_cast<const CUtensorMap *>(ptr);
+    } else {
+      gmem_ptr_raw = reinterpret_cast<const uint32_t *>(ptr);
+    }
   }
 
   template <bool kShouldAdvance = true>
   CUDA_INLINE void load(void *smem_ptr, void *mbar_ptr) {
     counter = kLoadsPerGroup != 1 ? (counter + 1) % kLoadsPerGroup : 0;
-    load_legacy(smem_ptr);
+    if constexpr (kUseTma) load_tma(smem_ptr, mbar_ptr);
+    else if constexpr (kMMajorInputScale) load_legacy_m_major(smem_ptr);
+    else load_legacy(smem_ptr);
     if constexpr (kShouldAdvance) advance();
+  }
+
+  CUDA_INLINE void load_legacy_m_major(void *smem_ptr) {
+    const int4 *gmem4 = reinterpret_cast<const int4 *>(gmem_ptr);
+    int4 *smem4 = reinterpret_cast<int4 *>(smem_ptr);
+    uint32_t block_m_aligned = MIN(total_shape_m - row_offset, BlockShape::M);
+    PRAGMA_UNROLL
+    for (uint32_t g = 0; g < kNumGroups; g++) {
+      PRAGMA_UNROLL
+      for (uint32_t i = 0; i < CEIL_DIV(BlockShape::M / 4, kNumLoadThreads); i++) {
+        uint32_t m4 = i * kNumLoadThreads + thread_id;
+        uint32_t smem_offset = (g * BlockShape::M) / 4 + m4;
+        uint32_t gmem_offset = (g * total_shape_m) / 4 + m4;
+        legacy_load_pred<kUseCpAsync>(gmem4 + gmem_offset, smem4 + smem_offset, m4 * 4 < block_m_aligned);
+      }
+    }
+  }
+
+  CUDA_INLINE void load_tma(void *smem_ptr, void *mbar_ptr) {
+    if (thread_id == 0) tma_load_2d(tensor_map_ptr, smem_ptr, mbar_ptr, row_offset, col_offset);
   }
 
   CUDA_INLINE void load_legacy(void *smem_ptr) {
@@ -94,7 +125,11 @@ public:
   void advance() {
     if (kIsGroupScale && (kLoadsPerGroup == 1 || counter == 0)) {
       col_offset += kNumGroups;
-      gmem_ptr += kNumGroups;
+      if constexpr (!kUseTma && kMMajorInputScale) {
+        gmem_ptr += kNumGroups * total_shape_m;
+      } else if constexpr (!kUseTma) {
+        gmem_ptr += kNumGroups;
+      }
     }
   }
 
@@ -117,7 +152,9 @@ public:
       row_offset = m_block_id * BlockShape::M;
     }
     block_shape_m = MIN((shape_m - row_offset), BlockShape::M);
-    if constexpr (!kIsIndexedGemm) {
+    if constexpr (kUseTma) {} else if constexpr (kMMajorInputScale) {
+      gmem_ptr = gmem_ptr_raw + (col_offset * total_shape_m + row_offset);
+    } else if constexpr (!kIsIndexedGemm) {
       gmem_ptr = gmem_ptr_raw + ((row_offset * kProblemNumGroups) + col_offset);
     } else {
       gmem_ptr = gmem_ptr_raw + col_offset;

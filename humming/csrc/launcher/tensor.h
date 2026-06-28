@@ -104,8 +104,13 @@ inline void check_tensor_as(std::optional<Tensor> &tensor, KernelData &kernel_da
   uint32_t group_size = kernel_data.input_scale_group_size;
   uint32_t num_groups = group_size == 0 ? 1 : CEIL_DIV(problem_shape_k, group_size);
 
-  std::vector<int64_t> expected_shape = {shape_m};
-  expected_shape.push_back(num_groups);
+  std::vector<int64_t> expected_shape;
+  if (kernel_data.use_m_major_input_scale) {
+    int64_t m_pad = (shape_m + 3) / 4 * 4;
+    expected_shape = {(int64_t)num_groups, m_pad};
+  } else {
+    expected_shape = {shape_m, (int64_t)num_groups};
+  }
   check_tensor_common(tensor.value(), "as", dev, ScalarType::Float, expected_shape);
 };
 
@@ -225,6 +230,24 @@ inline CUtensorMap make_tma_desc_a(Tensor tensor, KernelData &kernel_data) {
 
   tensor = torch_view_shape(tensor, {-1, tensor.size(-1)});
   return make_tma_desc(tensor, {tma_block_shape_k, tma_block_shape_m}, swizzle_bytes);
+}
+
+inline CUtensorMap make_tma_desc_as(std::optional<Tensor> &tensor_, KernelData &kernel_data) {
+  if (!tensor_.has_value() || !kernel_data.use_tma_as) return CUtensorMap();
+
+  uint32_t block_shape_m = kernel_data.block_shape_m;
+  uint32_t block_shape_k = kernel_data.block_shape_k;
+  uint32_t group_size = kernel_data.input_scale_group_size;
+  uint32_t num_groups = group_size == 0 ? 1 : CEIL_DIV(block_shape_k, group_size);
+
+  auto tensor = tensor_.value();
+  if (group_size == 0) {
+    tensor = torch_view_shape(tensor, {1, -1});
+  } else {
+    tensor = torch_view_shape(tensor, {-1, tensor.size(-1)});
+  }
+
+  return make_tma_desc(tensor, {block_shape_m, num_groups});
 }
 
 inline CUtensorMap make_tma_desc_b(Tensor &tensor, KernelData &kernel_data) {

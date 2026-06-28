@@ -49,12 +49,20 @@ def get_heuristics_class(
     return heuristics_map[sm_version]
 
 
+def _apply_m_major_input_scale(config: dict, use_m_major_input_scale: bool, meta, gemm_type) -> None:
+    if not use_m_major_input_scale:
+        return
+    if config.get("use_tma") and meta.input_scale_group_size > 0 and gemm_type == GemmType.DENSE:
+        config["use_tma_as"] = True
+
+
 @functools.lru_cache(maxsize=1024)
 def get_heuristics_config(
     meta: "HummingLayerMeta | dict",
     shape_m: int | None = None,
     use_f16_accum: bool = False,
     use_batch_invariant: bool = False,
+    use_m_major_input_scale: bool = False,
     gemm_type: str | GemmType = "dense",
 ):
     from humming.layer import HummingLayerMeta
@@ -66,17 +74,22 @@ def get_heuristics_config(
         meta = HummingLayerMeta(**meta)
     heuristics_cls = get_heuristics_class()
     if isinstance(shape_m, int):
-        return heuristics_cls.get_config(
+        config = heuristics_cls.get_config(
             meta=meta,
             shape_m=shape_m,
             use_f16_accum=use_f16_accum,
             use_batch_invariant=use_batch_invariant,
             gemm_type=gemm_type,
         )
+        _apply_m_major_input_scale(config, use_m_major_input_scale, meta, gemm_type)
+        return config
     else:
-        return heuristics_cls.get_configs(
+        configs = heuristics_cls.get_configs(
             meta=meta,
             use_f16_accum=use_f16_accum,
             use_batch_invariant=use_batch_invariant,
             gemm_type=gemm_type,
         )
+        for entry in configs:
+            _apply_m_major_input_scale(entry[2], use_m_major_input_scale, meta, gemm_type)
+        return configs

@@ -11,7 +11,7 @@ template <
     class SharedStorage, class MMA, class Epilogue,
     class BlockShape, class WarpShape,
     class ElementA, class ElementB, class ElementBS,
-    class LayerConfig, class TuningConfig>
+    class LayerConfig, class ComputeConfig, class TuningConfig>
 class S2RMemoryPipeline {
 private:
   static constexpr bool kUseWgmma = MMA::MmaOpClass::kMmaType == MmaType::WGMMA;
@@ -33,7 +33,7 @@ private:
   using MmaOpClass = typename MMA::MmaOpClass;
   using LoaderA = S2RMemoryLoaderA<MmaOpClass, BlockShape, WarpShape, ElementA, TuningConfig>;
   using LoaderB = S2RMemoryLoaderB<BlockShape, WarpShape, ElementA, ElementB, TuningConfig>;
-  using LoaderAS = S2RMemoryLoaderAS<MmaOpClass, BlockShape, WarpShape, ElementA, LayerConfig, TuningConfig>;
+  using LoaderAS = S2RMemoryLoaderAS<MmaOpClass, BlockShape, WarpShape, ElementA, LayerConfig, ComputeConfig, TuningConfig>;
   using LoaderBS = S2RMemoryLoaderBS<MmaOpClass, BlockShape, WarpShape, ElementA, ElementBS, LayerConfig, TuningConfig>;
   using LoaderBZP = S2RMemoryLoaderBZP<BlockShape, WarpShape, ElementA, ElementB, LayerConfig, TuningConfig>;
   using LoaderBias = S2RMemoryLoaderBias<MmaOpClass, BlockShape, WarpShape, TuningConfig>;

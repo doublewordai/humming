@@ -26,6 +26,7 @@ private:
   static constexpr bool kUseCpAsync = TuningConfig::kUseCpAsync;
   static constexpr bool kUseTma = TuningConfig::kUseTma;
   static constexpr bool kUseTmaA = TuningConfig::kUseTmaA;
+  static constexpr bool kUseTmaAS = TuningConfig::kUseTmaAS && (ComputeConfig::kGemmType != GemmType::INDEXED);
   static constexpr bool kUseTmaB = TuningConfig::kUseTmaB;
   static constexpr bool kUseTmaBS = TuningConfig::kUseTmaBS;
   static constexpr bool kUseTmaBZP = TuningConfig::kUseTmaBZP;
@@ -55,7 +56,8 @@ private:
     else legacy_load_bytes += SharedStorage::kStageBytesB;
 
     if constexpr (kIsGroupInputScale) {
-      legacy_load_bytes += SharedStorage::kStageBytesAS;
+      if constexpr (kUseTmaAS) tma_load_bytes += SharedStorage::kStageBytesAS;
+      else legacy_load_bytes += SharedStorage::kStageBytesAS;
     }
 
     if constexpr (kIsGroupWeightScale || kIsBlockWeightScale) {
@@ -76,7 +78,8 @@ private:
     uint32_t legacy_load_bytes = 0;
 
     if constexpr (kIsChannelInputScale) {
-      legacy_load_bytes += SharedStorage::kChannelBytesAS;
+      if constexpr (kUseTmaAS) tma_load_bytes += SharedStorage::kChannelBytesAS;
+      else legacy_load_bytes += SharedStorage::kChannelBytesAS;
     }
 
     if constexpr (kIsChannelWeightScale) {
@@ -141,6 +144,7 @@ public:
 
     if (thread_id == 0) {
       if constexpr (kUseTmaA) prefetch_tensor_map(void_ptr_a);
+      if constexpr (kUseTmaAS) prefetch_tensor_map(void_ptr_as);
       if constexpr (kUseTmaB) prefetch_tensor_map(void_ptr_b);
       if constexpr (kUseTmaBS) prefetch_tensor_map(void_ptr_bs);
       if constexpr (kUseTmaBZP) prefetch_tensor_map(void_ptr_bzp);

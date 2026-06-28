@@ -98,6 +98,8 @@ def _quant_tensor_kernel(
     BLOCK: tl.constexpr,
     GROUPS_PER_BLOCK: tl.constexpr,
     dtype: tl.constexpr,
+    M_ROWS,
+    M_MAJOR: tl.constexpr,
 ):
     block_id = tl.program_id(0).to(tl.int64)
     tl.static_assert(N % GROUP_SIZE == 0)
@@ -110,6 +112,9 @@ def _quant_tensor_kernel(
         row_id = group_id // row_num_blocks
         col_block_id = group_id % row_num_blocks
         offset = row_id * stride_x + col_block_id * GROUP_SIZE
+        scale_off = (
+            col_block_id * M_ROWS + row_id if M_MAJOR else row_id * row_num_blocks + col_block_id
+        )
 
         if dtype == "int4" or dtype == "float4e2m1":
             cols = tl.arange(0, BLOCK // 2)
@@ -130,7 +135,7 @@ def _quant_tensor_kernel(
             tl.store(xq_ptr + group_id * GROUP_SIZE // 2 + cols, x_q, mask=mask)
 
             if is_dynamic:
-                tl.store(scale_ptr + row_id * row_num_blocks + col_block_id, scale, mask=in_range)
+                tl.store(scale_ptr + scale_off, scale, mask=in_range)
         else:
             cols = tl.arange(0, BLOCK)
             mask = (cols < GROUP_SIZE) & in_range
@@ -145,7 +150,7 @@ def _quant_tensor_kernel(
             tl.store(xq_ptr + group_id * GROUP_SIZE + cols, x_q, mask=mask)
 
             if is_dynamic:
-                tl.store(scale_ptr + row_id * row_num_blocks + col_block_id, scale, mask=in_range)
+                tl.store(scale_ptr + scale_off, scale, mask=in_range)
 
 
 def quant_input(
@@ -154,6 +159,7 @@ def quant_input(
     scales: torch.Tensor | None = None,
     outputs: torch.Tensor | None = None,
     group_size: int | None = None,
+    m_major_scale: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if dtype in ["int4", "float4e2m1"]:
         output_shape = (*inputs.shape[:-1], inputs.size(-1) // 2)
@@ -185,12 +191,15 @@ def quant_input(
     assert inputs.size(1) % group_size == 0
     num_blocks = inputs.nelement() // group_size
 
+    m_rows = inputs.size(0)
+    num_groups = inputs.size(1) // group_size
+    m_rows_stride = (m_rows + 3) // 4 * 4 if m_major_scale else m_rows
+    if m_major_scale:
+        assert is_dynamic, "m_major_scale requires dynamic quantization"
+
     if is_dynamic:
-        scales = torch.empty(
-            (inputs.size(0), inputs.size(1) // group_size),
-            dtype=torch.float32,
-            device=inputs.device,
-        )
+        shape = (num_groups, m_rows_stride) if m_major_scale else (m_rows, num_groups)
+        scales = torch.empty(shape, dtype=torch.float32, device=inputs.device)
 
     if not isinstance(inputs, FakeTensor):
         assert inputs.is_cuda
@@ -217,12 +226,16 @@ def quant_input(
             BLOCK,
             groups_per_block,
             dtype,
+            m_rows_stride,
+            m_major_scale,
             num_warps=num_warps,
             num_stages=num_stages,
         )
 
     if scales is None:
         scales = torch.empty(0)
+    elif m_major_scale:
+        scales = scales.view(num_groups, m_rows_stride)
     else:
         scales = scales.view(*outputs.shape[:-1], scales.size(-1))
 

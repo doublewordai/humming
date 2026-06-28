@@ -114,13 +114,16 @@ template <
     uint32_t kGroupSize,
     uint32_t kThreadsPerTile,
     uint32_t kTilesPerBlock,
-    bool kHasExtraScale>
+    bool kHasExtraScale,
+    bool kMMajor = false>
 __global__ void hadamard_quant_input(
     const SourceType *__restrict__ in_ptr,
     void *__restrict__ out_ptr,
     float *__restrict__ scales_ptr,
     float extra_scale,
-    uint32_t num_tiles) {
+    uint32_t num_tiles,
+    uint32_t shape_m = 0,
+    uint32_t groups_per_row = 0) {
 
   static_assert((kBlockSize & (kBlockSize - 1)) == 0);
   static_assert(kBlockSize % kGroupSize == 0);
@@ -310,7 +313,17 @@ __global__ void hadamard_quant_input(
   float scale_stored = scale_raw * norm;
 
   if (valid && lane_in_group == 0) {
-    uint32_t scale_idx = tile_idx * kGroupsPerTile + group_in_tile;
+    uint32_t scale_idx;
+    if constexpr (kMMajor) {
+      // M-major scale [num_groups_total, M]: scale_idx = group_global * M + row.
+      uint32_t num_blocks_per_row = groups_per_row / kGroupsPerTile;
+      uint32_t row = tile_idx / num_blocks_per_row;
+      uint32_t block_in_row = tile_idx - row * num_blocks_per_row;
+      uint32_t group_global = block_in_row * kGroupsPerTile + group_in_tile;
+      scale_idx = group_global * shape_m + row;
+    } else {
+      scale_idx = tile_idx * kGroupsPerTile + group_in_tile;
+    }
     scales_ptr[scale_idx] = scale_stored;
   }
 

@@ -7,7 +7,7 @@ template <
     class MmaOpClass,
     class BlockShape, class WarpShape,
     class ElementA,
-    class LayerConfig, class TuningConfig>
+    class LayerConfig, class ComputeConfig, class TuningConfig>
 class S2RMemoryLoaderAS {
 private:
   static constexpr bool kUseWgmma = MmaOpClass::kMmaType == MmaType::WGMMA;
@@ -16,6 +16,7 @@ private:
   static constexpr bool kHasInputScale = ElementA::kBits != 16;
   static constexpr bool kIsChannelScale = kHasInputScale && LayerConfig::kInputScaleGroupSize == 0;
   static constexpr bool kIsGroupScale = kHasInputScale && LayerConfig::kInputScaleGroupSize > 0;
+  static constexpr bool kMMajorInputScale = ComputeConfig::kUseMMajorInputScale && kIsGroupScale;
   static constexpr uint32_t kGroupSize = kIsGroupScale ? LayerConfig::kInputScaleGroupSize : BlockShape::K;
   static constexpr uint32_t kPartMmaShapeK = 256 / ElementA::kBits;
 
@@ -39,14 +40,15 @@ public:
       sub_row = lane_id / 4;
     }
 
-    uint32_t offset = 0;
+    uint32_t warp_m_base = 0;
     if constexpr (M_WARPS > 1) {
-      offset += (warp_id / N_WARPS % M_WARPS) * (WarpShape::M * kSmemStride);
+      warp_m_base = (warp_id / N_WARPS % M_WARPS) * WarpShape::M;
     }
 
+    uint32_t group_index = 0;
     if constexpr (kGroupSize < BlockShape::K) {
       uint32_t k_index = (warp_id / (M_WARPS * N_WARPS)) * WarpShape::K + iter_id * kPartMmaShapeK;
-      offset += (k_index / kGroupSize);
+      group_index = k_index / kGroupSize;
     };
 
     uint32_t *reg_ptr_load = reinterpret_cast<uint32_t *>(regs_ptr);
@@ -56,7 +58,13 @@ public:
     for (uint32_t i = 0; i < WarpShape::M / 8; i++) {
       PRAGMA_UNROLL
       for (uint32_t j = 0; j < kNumLinesPerBlock; j++) {
-        uint32_t smem_idx = offset + (i * 8 + sub_row + j) * kSmemStride;
+        uint32_t m_index = warp_m_base + i * 8 + sub_row + j;
+        uint32_t smem_idx;
+        if constexpr (kMMajorInputScale) {
+          smem_idx = group_index * BlockShape::M + m_index;
+        } else {
+          smem_idx = m_index * kSmemStride + group_index;
+        }
         uint32_t reg_idx = i * kNumLinesPerBlock + j;
         reg_ptr_load[reg_idx] = smem_ptr_load[smem_idx];
       }
