@@ -62,10 +62,12 @@ public:
       regs_ptr[0] = smem_ptr_load[group_base * WarpShape::N + n_warp_base + s_sh_rd];
     } else {
       uint32_t s_sh_rd = lane_id % 4 * 8 + lane_id / 4;
+      constexpr uint32_t kRowStride = kScaleVec == 1 ? BlockShape::N / 2 : BlockShape::N;
+      uint32_t nb = (warp_id % N_WARPS) * (kScaleVec == 1 ? WarpShape::N / 2 : WarpShape::N);
 
       PRAGMA_UNROLL
       for (uint32_t i = 0; i < WarpShape::N / (kScaleVec == 1 ? 64 : 32); i++) {
-        regs_ptr[i] = smem_ptr_load[group_base * BlockShape::N + i * 32 + n_warp_base + s_sh_rd];
+        regs_ptr[i] = smem_ptr_load[group_base * kRowStride + i * 32 + nb + s_sh_rd];
       }
     }
   }

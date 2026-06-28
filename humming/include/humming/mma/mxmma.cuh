@@ -74,8 +74,8 @@ public:
 
   CUDA_INLINE
   uint32_t get_thread_id_b(uint32_t stage_id, uint32_t iter_id, uint32_t n_id) {
-    if (kScaleVec == 1 && WarpShape::N == 16) {
-      return 0;
+    if constexpr (kScaleVec == 1) {
+      return n_id / 2;
     } else {
       return n_id;
     }
@@ -93,7 +93,7 @@ public:
     } else if constexpr (kScaleVec == 2) {
       return (iter_id % 2) * 2;
     } else if constexpr (kScaleVec == 1) {
-      return n_id * 2 + (iter_id % 2);
+      return (n_id % 2) * 2 + (iter_id % 2);
     }
 
     return 0;
