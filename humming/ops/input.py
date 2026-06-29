@@ -171,6 +171,8 @@ def _quant_tensor_kernel(
             tl.store(xq_ptr + group_id * GROUP_SIZE // 2 + cols, x_q, mask=mask)
 
             if is_dynamic:
+                if MX_PACK:
+                    s_store = s_store.to(tl.uint8, bitcast=True)
                 tl.store(scale_ptr + scale_off, s_store, mask=in_range)
         else:
             cols = tl.arange(0, BLOCK)
@@ -186,6 +188,8 @@ def _quant_tensor_kernel(
             tl.store(xq_ptr + group_id * GROUP_SIZE + cols, x_q, mask=mask)
 
             if is_dynamic:
+                if MX_PACK:
+                    s_store = s_store.to(tl.uint8, bitcast=True)
                 tl.store(scale_ptr + scale_off, s_store, mask=in_range)
 
 
@@ -235,7 +239,9 @@ def quant_input(
     if m_major_scale:
         assert is_dynamic, "m_major_scale requires dynamic quantization"
 
-    mx_pack_m_major = m_major_scale and scale_dtype == "float8e8m0" and is_dynamic
+    mx_pack_m_major = (
+        m_major_scale and scale_dtype in ("float8e8m0", "float8e4m3") and is_dynamic
+    )
     num_groups_packed = (num_groups + 3) // 4
 
     if scale_dtype == "float32":

@@ -130,8 +130,11 @@ class HummingLayerMeta(LayerConfig):
                 self.b_dtype = dataclasses.replace(self.b_dtype, is_signed=False)
 
         if not self.use_fused_e8m0_scale:
+            sm_major = torch.cuda.get_device_capability()[0] if torch.cuda.is_available() else 0
+            has_native_mxf8f6f4 = sm_major == 12 and self.a_dtype == dtypes.float8e4m3
             self.use_fused_e8m0_scale = (
-                self.a_dtype in [dtypes.float8e4m3, dtypes.int8]
+                not has_native_mxf8f6f4
+                and self.a_dtype in [dtypes.float8e4m3, dtypes.int8]
                 and self.weight_scale_group_size > 0
                 and self.b_dtype in [dtypes.float4e2m1]
                 and self.bs_dtype in [dtypes.float8e8m0]
