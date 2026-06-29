@@ -40,6 +40,49 @@ CUDA_INLINE void dequant_b1248(const uint32_t *qb, uint32_t *res, uint32_t j, ui
 }
 
 
+template <class SourceType>
+CUDA_INLINE void repack_native_mxf8f6f4(const uint32_t *qb, uint32_t *res, uint32_t j) {
+  constexpr uint32_t kSrcBits = SourceType::kBits;
+  constexpr uint32_t kTgtBits = 8;
+  constexpr uint32_t kPaddedSrcBits = static_next_power_of_2(kSrcBits);  // 4 or 8
+  constexpr uint32_t kKeepMask = ((1u << kSrcBits) - 1u) << (kTgtBits - kSrcBits);
+  constexpr uint32_t kKeepMaskRep = kKeepMask * 0x01010101u;
+  constexpr uint32_t kHighPad = 2;
+  constexpr uint32_t reverse_pattern = kTgtBits / kPaddedSrcBits;
+
+  if constexpr (kSrcBits == static_next_power_of_2(kSrcBits)) {
+    constexpr uint32_t kResultPackedNumSourceBits = (32 / kTgtBits) * kSrcBits;
+    PRAGMA_UNROLL
+    for (uint32_t i = 0; i < 4; i++) {
+      uint32_t index = j * 4 + i;
+      uint32_t qb_index = kResultPackedNumSourceBits * index / 32;
+      uint32_t shift_count = (kSrcBits * 4 % kTgtBits == 0) ? (kSrcBits * i % kTgtBits)
+                                                            : (kSrcBits * index % kTgtBits);
+      uint32_t qb_val = qb[qb_index];
+      if (shift_count) qb_val = qb_val << shift_count;
+      uint32_t reversed_index = i / reverse_pattern * reverse_pattern + reverse_pattern - 1 - i % reverse_pattern;
+      res[reversed_index] = (qb_val & kKeepMaskRep) >> kHighPad;
+    }
+  } else {
+    PRAGMA_UNROLL
+    for (uint32_t i = 0; i < 4; i++) {
+      uint32_t index = j * 4 + i;
+      uint32_t qb_val = 0;
+      if (index * kPaddedSrcBits % kTgtBits == 0) {
+        const uint32_t idx1 = index / kTgtBits;
+        const uint32_t idx2 = index * kPaddedSrcBits / kTgtBits % kPaddedSrcBits;
+        const uint32_t qb_offset = idx1 * kSrcBits;
+        qb_val = get_quanted_value_group<SourceType::kNumBits, false>(qb + qb_offset, idx2);
+      }
+      uint32_t shift_count = (kPaddedSrcBits * 4 % kTgtBits == 0) ? (kPaddedSrcBits * i % kTgtBits)
+                                                                  : (kPaddedSrcBits * index % kTgtBits);
+      if (shift_count) qb_val = qb_val << shift_count;
+      res[i] = (qb_val & kKeepMaskRep) >> kHighPad;
+    }
+  }
+}
+
+
 template <class SourceType, class TargetType, bool kHasZeroPoint, bool kIsFpZeroPoint, uint32_t kNumWarpShapeNSplits = 1>
 CUDA_INLINE void dequant_b3567(const uint32_t *qb, uint32_t *res, uint32_t j, uint32_t *zp_vals = nullptr) {
   static_assert(SourceType::kBits <= TargetType::kBits);

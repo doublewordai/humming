@@ -13,6 +13,7 @@ public:
   static constexpr uint32_t kPartMmaShapeK = 256 / ElementA::kBits;
   static constexpr uint32_t kNumWarpShapeNSplits = WarpShape::N == ElementA::kBits * 2 ? 2 : 1;
   static constexpr uint32_t kScaleVec = MmaOpClass_::kScaleVec;
+  static constexpr bool kNativeMixed = MmaOpClass_::kNativeMixed;
 
   static constexpr uint32_t kAsGroup = LayerConfig::kInputScaleGroupSize;
   static constexpr uint32_t kAsBlockGroups = kAsGroup > 0 ? BlockShape::K / kAsGroup : 1;
@@ -56,6 +57,15 @@ public:
   CUDA_INLINE
   void transform_b(uint32_t buffer_id) {
     if constexpr (std::is_same<ElementA, ElementB>::value) return;
+
+    if constexpr (kNativeMixed) {
+      PRAGMA_UNROLL
+      for (uint32_t i = 0; i < WarpShape::N / 16; i++) {
+        uint32_t *regs_b_ptr = reinterpret_cast<uint32_t *>(regs_b[buffer_id][i * 16 / MmaShape::N]);
+        repack_native_mxf8f6f4<ElementB>(regs_qb[buffer_id], regs_b_ptr, i);
+      }
+      return;
+    }
 
     PRAGMA_UNROLL
     for (uint32_t i = 0; i < WarpShape::N / 16; i++) {

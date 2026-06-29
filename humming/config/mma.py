@@ -13,6 +13,8 @@ DTYPE_BIT_WIDTH_MAP = {
     "e5m2": 8,
     "e8m0": 8,
     "s8": 8,
+    "e3m2": 6,
+    "e2m3": 6,
     "e2m1": 4,
     "s4": 4,
 }
@@ -26,6 +28,8 @@ DTYPE_MAP = {
     dtypes.float8e5m2: "e5m2",
     dtypes.float8e8m0: "e8m0",
     dtypes.int8: "s8",
+    dtypes.float6e3m2: "e3m2",
+    dtypes.float6e2m3: "e2m3",
     dtypes.float4e2m1: "e2m1",
     dtypes.int4: "s4",
 }
@@ -81,6 +85,7 @@ class MmaOpClassImpl:
             f"static constexpr uint32_t kBTypeBits = {DTYPE_BIT_WIDTH_MAP[self.b_dtype]};",
             f"static constexpr uint32_t kCTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
             f"static constexpr uint32_t kDTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
+            "static constexpr bool kNativeMixed = false;",
             "",
             f"using ARegisters = uint32_t[{self.reg_a_count}];",
             f"using BRegisters = uint32_t[{self.reg_b_count}];",
@@ -190,6 +195,7 @@ class WgmmaOpClassImpl:
             f"static constexpr uint32_t kBTypeBits = {DTYPE_BIT_WIDTH_MAP[self.b_dtype]};",
             f"static constexpr uint32_t kCTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
             f"static constexpr uint32_t kDTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
+            "static constexpr bool kNativeMixed = false;",
             "",
             f"using BRegisters = uint32_t[{self.reg_b_count}];",
             f"using CRegisters = {self.reg_cd_type}[{self.reg_cd_count}];",
@@ -346,8 +352,12 @@ class MxMmaOpClassImpl:
             self.kind = "kind::mxf8f6f4"
             self.scale_vec = "scale_vec::1X"
 
+        self.native_mixed = self.kind == "kind::mxf8f6f4" and self.a_dtype != self.b_dtype
+        b_reg_dtype = self.b_dtype
+        if self.kind == "kind::mxf8f6f4" and DTYPE_BIT_WIDTH_MAP[self.b_dtype] < 8:
+            b_reg_dtype = "e4m3"
         self.reg_a_count = calc_reg_count(m, k, self.a_dtype)
-        self.reg_b_count = calc_reg_count(k, n, self.b_dtype)
+        self.reg_b_count = calc_reg_count(k, n, b_reg_dtype)
         self.reg_cd_count = calc_reg_count(m, n, self.cd_dtype)
         if self.cd_dtype == "f32":
             self.val_type_cd = "float"
@@ -376,6 +386,7 @@ class MxMmaOpClassImpl:
             f"static constexpr uint32_t kCTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
             f"static constexpr uint32_t kDTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
             f"static constexpr uint32_t kSFTypeBits = {DTYPE_BIT_WIDTH_MAP[self.sf_dtype]};",
+            f"static constexpr bool kNativeMixed = {'true' if self.native_mixed else 'false'};",
             "",
             f"using ARegisters = uint32_t[{self.reg_a_count}];",
             f"using BRegisters = uint32_t[{self.reg_b_count}];",
