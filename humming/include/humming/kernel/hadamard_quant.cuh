@@ -356,12 +356,15 @@ __global__ void hadamard_quant_input(
 
   uint32_t scale_idx;
   if constexpr (kMMajor) {
-    // M-major scale [num_groups_total, M]: scale_idx = group_global * M + row.
     uint32_t num_blocks_per_row = groups_per_row / kGroupsPerTile;
     uint32_t row = tile_idx / num_blocks_per_row;
     uint32_t block_in_row = tile_idx - row * num_blocks_per_row;
     uint32_t group_global = block_in_row * kGroupsPerTile + group_in_tile;
-    scale_idx = group_global * shape_m + row;
+    if constexpr (kScaleStore == kScaleStoreE8M0) {
+      scale_idx = (group_global / 4) * (shape_m * 4) + row * 4 + (group_global % 4);
+    } else {
+      scale_idx = group_global * shape_m + row;
+    }
   } else {
     scale_idx = tile_idx * kGroupsPerTile + group_in_tile;
   }

@@ -130,9 +130,10 @@ def hadamard_quant_input(
         out_shape = inputs.shape
 
     num_groups_total = last_dim // group_size
+    mx_pack = m_major_scale and scale_dtype == "float8e8m0"
     if m_major_scale:
         m_pad = (inputs.numel() // last_dim + 3) // 4 * 4
-        scales_shape = (num_groups_total, m_pad)
+        scales_shape = ((num_groups_total + 3) // 4, m_pad) if mx_pack else (num_groups_total, m_pad)
     else:
         scales_shape = inputs.shape[:-1] + (num_groups_total,)
     if outputs is None:
@@ -143,10 +144,13 @@ def hadamard_quant_input(
         assert outputs.device == inputs.device
         assert outputs.is_contiguous()
     if scales is None:
-        scales = torch.empty(scales_shape, dtype=scale_torch_dtype, device=inputs.device)
+        if mx_pack:
+            scales = torch.empty(scales_shape, dtype=torch.int32, device=inputs.device)
+        else:
+            scales = torch.empty(scales_shape, dtype=scale_torch_dtype, device=inputs.device)
     else:
         assert scales.shape == scales_shape
-        assert scales.dtype == scale_torch_dtype
+        assert scales.dtype == (torch.int32 if mx_pack else scale_torch_dtype)
         assert scales.device == inputs.device
         assert scales.is_contiguous()
 
@@ -181,12 +185,12 @@ def hadamard_quant_input(
         kernel(
             inputs=inputs,
             outputs=outputs,
-            scales=scales,
+            scales=scales.view(torch.uint8) if mx_pack else scales,
             extra_scale=scale,
             global_scale=global_scale,
         )
 
-    if scale_dtype == "float8e8m0":
+    if scale_dtype == "float8e8m0" and not mx_pack:
         scales = scales.view(torch.float8_e8m0fnu)
 
     return outputs, scales

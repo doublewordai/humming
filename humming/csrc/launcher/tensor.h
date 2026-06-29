@@ -265,7 +265,7 @@ inline CUtensorMap make_tma_desc_as(std::optional<Tensor> &tensor_, KernelData &
   auto tensor = tensor_.value();
   if (kernel_data.mma_type_id == 3) {
     tensor = torch_view_shape(tensor, {-1, tensor.size(-1)});
-    return make_tma_desc(tensor, {block_shape_m, num_groups / 4});
+    return make_tma_desc(tensor, {block_shape_m, CEIL_DIV(num_groups, 4)});
   }
   if (group_size == 0) {
     tensor = torch_view_shape(tensor, {1, -1});

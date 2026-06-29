@@ -227,10 +227,13 @@ __global__ void hadamard_quant_input_wide(
 
   uint32_t scale_idx;
   if constexpr (kMMajor) {
-    // M-major scale [num_groups_total, M]: scale_idx = group_in_row * M + row.
     uint32_t row = group_idx / groups_per_row;
     uint32_t group_in_row = group_idx - row * groups_per_row;
-    scale_idx = group_in_row * shape_m + row;
+    if constexpr (kScaleStore == kScaleStoreE8M0) {
+      scale_idx = (group_in_row / 4) * (shape_m * 4) + row * 4 + (group_in_row % 4);
+    } else {
+      scale_idx = group_in_row * shape_m + row;
+    }
   } else {
     scale_idx = group_idx;
   }
