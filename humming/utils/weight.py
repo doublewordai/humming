@@ -13,6 +13,7 @@ def quantize_weight(
     has_global_scale: bool = False,
     is_fp_zero_point: bool = False,
     pack: bool = False,
+    allow_negative_scale: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
     assert weight.dtype in [torch.float16, torch.bfloat16, torch.float32]
     assert weight.ndim in [2, 3]
@@ -49,6 +50,7 @@ def quantize_weight(
         has_scale=scale_dtype is not None or has_global_scale,
         has_zero_point=has_zero_point,
         is_fp_zero_point=is_fp_zero_point,
+        allow_negative_scale=allow_negative_scale,
     )
 
     if zero_point.dtype == torch.float32:
