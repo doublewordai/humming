@@ -209,14 +209,10 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
             assert self.warp_shape[0] % mma_shape_m == 0
             assert self.warp_shape[1] % mma_shape_n == 0
             assert self.warp_shape[2] % mma_shape_k == 0
-            # scale_vec = number of block scales spanning one mma K-tile.
             group = self.weight_scale_group_size or mma_shape_k
             assert mma_shape_k % group == 0
             scale_vec = mma_shape_k // group
-            # The block-scaled mma runs as a-typed x mma_b_dtype. By default a != b
-            # is handled by dequantizing the stored b (ElementB) -> a in transform_b
-            # (Mechanism B), so the instruction stays a x a. Native mixed
-            # fp8 x fp4/fp6 (mxf8f6f4, no dequant) opts in via mxmma_native_mixed.
+
             mma_b_dtype = self.b_dtype if self.mxmma_native_mixed else self.a_dtype
             return MmaOpClass.from_config(
                 self.mma_type,
