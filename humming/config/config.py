@@ -133,11 +133,9 @@ class LayerConfig(BaseHummingConfig):
     def mxmma_native_mixed(self) -> bool:
         if self.mma_type != MmaType.MXMMA:
             return False
-        return (
-            isinstance(self.a_dtype, dtypes.FloatingPointType)
-            and self.a_dtype.num_bits == 8
-            and self.b_dtype in (dtypes.float4e2m1, dtypes.float6e3m2, dtypes.float6e2m3)
-        )
+        if self.a_dtype not in (dtypes.float8e4m3, dtypes.float8e5m2):
+            return False
+        return self.b_dtype in (dtypes.float4e2m1, dtypes.float6e3m2, dtypes.float6e2m3)
 
 
 @dataclasses.dataclass(kw_only=True)
