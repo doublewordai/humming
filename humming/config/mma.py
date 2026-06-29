@@ -54,8 +54,13 @@ class MmaOpClassImpl:
         self.b_dtype = b_dtype if isinstance(b_dtype, str) else DTYPE_MAP[b_dtype]
         self.cd_dtype = cd_dtype if isinstance(cd_dtype, str) else DTYPE_MAP[cd_dtype]
 
+        f6f4_types = ("e3m2", "e2m3", "e2m1")
+        self.use_f8f6f4 = self.a_dtype in ("e4m3", "e5m2") and self.b_dtype in f6f4_types
+        self.native_mixed = self.use_f8f6f4
+
+        b_reg_dtype = "e4m3" if self.use_f8f6f4 else self.b_dtype
         self.reg_a_count = calc_reg_count(m, k, self.a_dtype)
-        self.reg_b_count = calc_reg_count(k, n, self.b_dtype)
+        self.reg_b_count = calc_reg_count(k, n, b_reg_dtype)
         self.reg_cd_count = calc_reg_count(m, n, self.cd_dtype)
         if self.cd_dtype == "f16":
             self.val_type_cd = "half"
@@ -85,7 +90,7 @@ class MmaOpClassImpl:
             f"static constexpr uint32_t kBTypeBits = {DTYPE_BIT_WIDTH_MAP[self.b_dtype]};",
             f"static constexpr uint32_t kCTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
             f"static constexpr uint32_t kDTypeBits = {DTYPE_BIT_WIDTH_MAP[self.cd_dtype]};",
-            "static constexpr bool kNativeMixed = false;",
+            f"static constexpr bool kNativeMixed = {'true' if self.native_mixed else 'false'};",
             "",
             f"using ARegisters = uint32_t[{self.reg_a_count}];",
             f"using BRegisters = uint32_t[{self.reg_b_count}];",
@@ -110,7 +115,10 @@ class MmaOpClassImpl:
         cd_dtype = self.cd_dtype
         shape = self.shape
 
-        asm_op = f"mma.sync.aligned.m{shape[0]}n{shape[1]}k{shape[2]}.row.col"
+        asm_op = "mma.sync.aligned"
+        if self.use_f8f6f4:
+            asm_op += ".kind::f8f6f4"
+        asm_op += f".m{shape[0]}n{shape[1]}k{shape[2]}.row.col"
         asm_op += f".{cd_dtype}.{a_dtype}.{b_dtype}.{cd_dtype}"
         if "s" in a_dtype:
             asm_op += ".satfinite"

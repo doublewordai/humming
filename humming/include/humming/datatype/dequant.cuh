@@ -48,7 +48,7 @@ CUDA_INLINE void repack_native_mxf8f6f4(const uint32_t *qb, uint32_t *res, uint3
     res[2] = (qb[2 * j + 1] & 0x0F0F0F0Fu) << 2;
     res[3] = (qb[2 * j + 1] & 0xF0F0F0F0u) >> 2;
   } else {
-    static_assert(std::is_same<SourceType, Float6E3M2>::value && std::is_same<SourceType, Float6E2M3>::value);
+    static_assert(std::is_same<SourceType, Float6E3M2>::value || std::is_same<SourceType, Float6E2M3>::value);
     PRAGMA_UNROLL
     for (uint32_t i = 0; i < 4; i++) {
       uint32_t index = j * 4 + i;

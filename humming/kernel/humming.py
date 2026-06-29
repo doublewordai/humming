@@ -253,13 +253,22 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
             assert self.warp_shape[1] % mma_shape_n == 0
         assert self.warp_shape[2] % mma_shape_k == 0
 
+        mma_native_mixed = (
+            self.mma_type == MmaType.MMA
+            and self.sm_version // 10 == 12
+            and mma_shape_m == 16
+            and self.a_dtype in (dtypes.float8e4m3, dtypes.float8e5m2)
+            and self.b_dtype in (dtypes.float4e2m1, dtypes.float6e3m2, dtypes.float6e2m3)
+        )
+        mma_b_dtype = self.b_dtype if mma_native_mixed else self.a_dtype
+
         return MmaOpClass.from_config(
             self.mma_type,
             mma_shape_m,
             mma_shape_n,
             mma_shape_k,
             self.a_dtype,
-            self.a_dtype,
+            mma_b_dtype,
             mma_cd_dtype,
         )
 
