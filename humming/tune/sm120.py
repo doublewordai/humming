@@ -43,6 +43,12 @@ class Sm120Heuristics(Sm89Heuristics):
                 "warp_shape": (128, 32, block_k),
                 "num_stages": 2,
             }
+        if a_dtype.is_floating_point_type and a_dtype.num_bits == 16 and not use_f16_accum:
+            return {
+                "block_shape": (128, 256, 64),
+                "warp_shape": (128, 32, 64),
+                "num_stages": 2,
+            }
         return super().get_base_config(
             a_dtype, b_dtype, group_size, use_f16_accum, use_fused_e8m0_scale, gemm_type, shape_k
         )
@@ -60,19 +66,25 @@ class Sm120Heuristics(Sm89Heuristics):
         if use_batch_invariant:
             return config
 
-        if meta.a_dtype.is_floating_point_type and not meta.use_fused_e8m0_scale:
+        a = meta.a_dtype
+        is_wna16 = a.is_floating_point_type and a.num_bits == 16 and not use_f16_accum
+        if a.is_floating_point_type and a.num_bits <= 8 and not meta.use_fused_e8m0_scale:
             config["use_tma"] = True
             config["use_warp_spec"] = True
+        elif is_wna16:
+            config["use_tma"] = True
+            config["use_warp_spec"] = True
+            config["num_stages"] = cls._fit_num_stages(meta, config, gemm_type, reduce_overlap=False)
 
         group_size = meta.input_scale_group_size or meta.weight_scale_group_size
         if cls._is_mxmma(meta.a_dtype, group_size, meta.use_fused_e8m0_scale):
             config["reduce_overlap_last_stage_only"] = True
-            config["num_stages"] = cls._mxmma_num_stages(meta, config, gemm_type)
+            config["num_stages"] = cls._fit_num_stages(meta, config, gemm_type, reduce_overlap=True)
 
         return config
 
     @classmethod
-    def _mxmma_num_stages(cls, meta, config, gemm_type) -> int:
+    def _fit_num_stages(cls, meta, config, gemm_type, reduce_overlap: bool) -> int:
         best = 2
         for num_stages in (3, 4):
             smem = estimate_smem_size_layer(
@@ -81,7 +93,7 @@ class Sm120Heuristics(Sm89Heuristics):
                 gemm_type,
                 num_stages,
                 warp_shape=config["warp_shape"],
-                reduce_overlap_last_stage_only=True,
+                reduce_overlap_last_stage_only=reduce_overlap,
                 use_mbarrier=True,
                 use_warp_spec=True,
                 num_write_splits=config.get("num_write_splits", 1),
