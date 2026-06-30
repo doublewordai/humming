@@ -108,9 +108,9 @@ inline void check_tensor_as(std::optional<Tensor> &tensor, KernelData &kernel_da
     std::vector<int64_t> expected_shape;
     if (kernel_data.use_tma_as) {
       int64_t m_pad = (shape_m + 3) / 4 * 4;
-      expected_shape = {(int64_t)(num_groups / 4), m_pad};
+      expected_shape = {(int64_t)CEIL_DIV(num_groups, 4), m_pad};
     } else {
-      expected_shape = {shape_m, (int64_t)(num_groups / 4)};
+      expected_shape = {shape_m, (int64_t)CEIL_DIV(num_groups, 4)};
     }
     check_tensor_common(tensor.value(), "as", dev, ScalarType::Int, expected_shape);
   } else {
