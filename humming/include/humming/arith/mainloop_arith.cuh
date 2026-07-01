@@ -77,7 +77,8 @@ public:
 
           uint32_t dzp_val = zp[buffer_id][n_id];
           dzp_val = dzp_val >> ((index * 2 + j) % kNumZPsPerInt * kNumZPBits);
-          zp_vals[j * 2 + i] = dequant_single_zero_point<ElementB, ElementA>(dzp_val);
+          uint32_t zp_idx = kUseWgmma ? (i * 2 + j) : (j * 2 + i);
+          zp_vals[zp_idx] = dequant_single_zero_point<ElementB, ElementA>(dzp_val);
         }
       }
     }
