@@ -15,7 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # setuptools_scm needs full history + tags to compute the version
           fetch-depth: 0
 
       - name: Set up Python
@@ -29,7 +28,6 @@ jobs:
       - name: Build sdist and wheel
         run: python -m build
 
-      # Artifact 下载下来是 zip，无法直接 pip install，仅作为按次构建的留档。
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -37,16 +35,3 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 90
-
-      # Release 附件是独立的 .whl 文件，可直接 pip install <url>。
-      # 仅在默认分支的 push 上发布，滚动更新 dev prerelease。
-      - name: Publish rolling dev release
-        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete dev --cleanup-tag --yes || true
-          gh release create dev dist/* \
-            --title "Latest dev build" \
-            --notes "Automated build from ${{ github.sha }}." \
-            --prerelease
