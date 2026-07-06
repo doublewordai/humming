@@ -63,6 +63,14 @@ def may_build_nvrtc_compile_binary():
             _cached_binary_path = binary_path.as_posix()
             return _cached_binary_path
 
+        nvrtc_link_arg = "-lnvrtc"
+        if not os.path.exists(os.path.join(lib_dir, "libnvrtc.so")):
+            versioned_nvrtc = sorted(
+                Path(p).name for p in glob.glob(os.path.join(lib_dir, "libnvrtc.so.*"))
+            )
+            if versioned_nvrtc:
+                nvrtc_link_arg = f"-l:{versioned_nvrtc[-1]}"
+
         tmp_binary = binary_path.with_suffix(".tmp")
         cmd = [
             "g++",
@@ -71,7 +79,7 @@ def may_build_nvrtc_compile_binary():
             src_path,
             *[f"-I{d}" for d in include_paths],
             f"-L{lib_dir}",
-            "-lnvrtc",
+            nvrtc_link_arg,
             f"-Wl,-rpath,{lib_dir}",
             "-o",
             tmp_binary.as_posix(),
