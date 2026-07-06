@@ -350,6 +350,8 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
         tuning_config_str = prepare_config_str(tuning_config)
         cache_key = (layer_config_str, compute_config_str, tuning_config_str)
         if cache_key in cls._str2kernel_cache:
+            if os.environ.get("HUMMING_DEBUG_CONFIG", "0") == "1":
+                print("[humming-config] cache_hit", cls._str2kernel_cache[cache_key].tolist(), flush=True)
             return cls._str2kernel_cache[cache_key]
 
         layer_config_obj = prepare_config_obj(layer_config)
@@ -372,6 +374,21 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
                 dtype=torch.int64,
                 device="cpu",
             )
+            if os.environ.get("HUMMING_DEBUG_CONFIG", "0") == "1":
+                print(
+                    "[humming-config] single "
+                    + json.dumps(
+                        {
+                            "layer": layer_config_obj,
+                            "compute": compute_config_obj,
+                            "tuning": tuning_config_obj,
+                            "kernel_id": kernel.kernel_id,
+                            "num_sms": num_sms,
+                        },
+                        default=str,
+                    ),
+                    flush=True,
+                )
             cls._str2kernel_cache[cache_key] = res
             return res
 
@@ -397,11 +414,43 @@ class HummingKernel(KernelRuntime, LayerConfig, ComputeConfig, TuningConfig):
             ) as executor:
                 for config, kernel, num_sms in executor.map(prepare_kernel, tuning_config_obj):
                     kernel.load_cubin()
+                    if os.environ.get("HUMMING_DEBUG_CONFIG", "0") == "1":
+                        print(
+                            "[humming-config] ranged "
+                            + json.dumps(
+                                {
+                                    "range": [config[0], config[1]],
+                                    "layer": layer_config_obj,
+                                    "compute": compute_config_obj,
+                                    "tuning": config[2],
+                                    "kernel_id": kernel.kernel_id,
+                                    "num_sms": num_sms,
+                                },
+                                default=str,
+                            ),
+                            flush=True,
+                        )
                     res += [config[0], config[1], kernel.kernel_id, num_sms]
         else:
             for config in tuning_config_obj:
                 _, kernel, num_sms = prepare_kernel(config)
                 kernel.load_cubin()
+                if os.environ.get("HUMMING_DEBUG_CONFIG", "0") == "1":
+                    print(
+                        "[humming-config] ranged "
+                        + json.dumps(
+                            {
+                                "range": [config[0], config[1]],
+                                "layer": layer_config_obj,
+                                "compute": compute_config_obj,
+                                "tuning": config[2],
+                                "kernel_id": kernel.kernel_id,
+                                "num_sms": num_sms,
+                            },
+                            default=str,
+                        ),
+                        flush=True,
+                    )
                 res += [config[0], config[1], kernel.kernel_id, num_sms]
 
         res = torch.tensor(res, dtype=torch.int64, device="cpu")
