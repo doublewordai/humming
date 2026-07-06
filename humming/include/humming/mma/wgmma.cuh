@@ -112,23 +112,43 @@ public:
       constexpr uint32_t kNumIters = WarpShape::N / (MmaShape::N / 4);
 
       bool scale_d = true;
-      constexpr bool kApplyScaleOnC = ElementA::kBits != 16 && (LayerConfig::kInputScaleGroupSize > 0 || LayerConfig::kWeightScaleGroupSize > 0);
-      if constexpr (!kUseFusedE8m0Scale && ElementA::kBits != 16 && LayerConfig::kInputScaleGroupSize > 0) {
+      bool apply_scale_on_c = false;
+      uint32_t k_index = iter_id * kPartMmaShapeK + (k + 1) * MmaShape::K;
+      uint32_t is_last_iter = iter_id == (kWarpItersK - 1);
+      if constexpr (ElementA::kBits != 16 && LayerConfig::kInputScaleGroupSize > 0) {
         scale_d = (iter_id * kPartMmaShapeK) % LayerConfig::kInputScaleGroupSize > 0;
+        apply_scale_on_c = is_last_iter || (k_index % LayerConfig::kInputScaleGroupSize == 0);
       }
       if constexpr (!kUseFusedE8m0Scale && ElementA::kBits != 16 && LayerConfig::kWeightScaleGroupSize > 0) {
         scale_d = scale_d && (iter_id * kPartMmaShapeK) % LayerConfig::kWeightScaleGroupSize > 0;
+        apply_scale_on_c = apply_scale_on_c || is_last_iter || (k_index % LayerConfig::kWeightScaleGroupSize == 0);
       }
 
       wgmma_fence();
-      PRAGMA_UNROLL
-      for (uint32_t j = 0; j < kNumIters; j++) {
-        if constexpr (kApplyScaleOnC) fence_regs(regs_c[0][j][0]);
-        MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
+      if (apply_scale_on_c) {
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          fence_regs(regs_c[0][j][0]);
+          MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
+        }
         wgmma_commit();
         wgmma_wait<0>();
-        if constexpr (kApplyScaleOnC) fence_regs(regs_c[0][j][0]);
-        arith.may_apply_as_and_bs_on_wgmma_c(regs_c_as_ptr(), j, k, iter_id);
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          fence_regs(regs_c[0][j][0]);
+          if constexpr (kUseFusedE8m0Scale && ElementA::kBits != 16 && LayerConfig::kInputScaleGroupSize > 0) {
+            arith.apply_fused_group_as_on_wgmma_c(regs_c_as_ptr(), j, iter_id);
+          } else {
+            arith.may_apply_as_and_bs_on_wgmma_c(regs_c_as_ptr(), j, k, iter_id);
+          }
+        }
+      } else {
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
+          wgmma_commit();
+          wgmma_wait<0>();
+        }
       }
     }
   };
