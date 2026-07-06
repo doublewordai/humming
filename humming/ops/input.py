@@ -148,6 +148,105 @@ def _quant_tensor_kernel(
                 tl.store(scale_ptr + row_id * row_num_blocks + col_block_id, scale, mask=in_range)
 
 
+@triton.jit
+def _swiglu_clamp_quant_kernel(
+    x_ptr,
+    xq_ptr,
+    scale_ptr,
+    stride_x: tl.constexpr,
+    stride_xq: tl.constexpr,
+    stride_scale: tl.constexpr,
+    hidden: tl.constexpr,
+    group_size: tl.constexpr,
+    swiglu_limit: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    row_id = tl.program_id(0).to(tl.int64)
+    group_id = tl.program_id(1).to(tl.int64)
+    cols = group_id * group_size + tl.arange(0, BLOCK)
+    mask = cols < hidden
+
+    row_ptr = x_ptr + row_id * stride_x
+    gate = tl.load(row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+    up = tl.load(row_ptr + hidden + cols, mask=mask, other=0.0).to(tl.float32)
+
+    if swiglu_limit > 0:
+        gate = tl.minimum(gate, swiglu_limit)
+        up = tl.minimum(tl.maximum(up, -swiglu_limit), swiglu_limit)
+
+    activated = gate * tl.sigmoid(gate) * up
+    activated = activated.to(tl.bfloat16).to(tl.float32)
+    scale = tl.maximum(tl.max(tl.abs(activated), axis=0), 1.0e-30) / 448.0
+    x_q = (activated / scale).to(tl.float8e4nv)
+
+    tl.store(xq_ptr + row_id * stride_xq + cols, x_q, mask=mask)
+    tl.store(scale_ptr + row_id * stride_scale + group_id, scale)
+
+
+def swiglu_clamp_quant_input(
+    inputs: torch.Tensor,
+    dtype: str = "float8e4m3",
+    outputs: torch.Tensor | None = None,
+    scales: torch.Tensor | None = None,
+    group_size: int | None = None,
+    swiglu_limit: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if dtype != "float8e4m3":
+        raise ValueError("swiglu_clamp_quant_input only supports float8e4m3")
+    assert inputs.dtype in [torch.float16, torch.bfloat16, torch.float32]
+    assert inputs.size(-1) % 2 == 0
+
+    hidden = inputs.size(-1) // 2
+    output_shape = (*inputs.shape[:-1], hidden)
+    if outputs is None:
+        outputs = torch.empty(output_shape, dtype=torch.float8_e4m3fn, device=inputs.device)
+
+    assert outputs.shape == output_shape
+    assert outputs.dtype == torch.float8_e4m3fn
+    assert outputs.device == inputs.device
+
+    inputs_2d = inputs.view(-1, inputs.size(-1))
+    outputs_2d = outputs.view(-1, outputs.size(-1))
+    if group_size is None or group_size == 0:
+        group_size = hidden
+    assert hidden % group_size == 0
+
+    if scales is None:
+        scales = torch.empty(
+            (outputs_2d.size(0), hidden // group_size),
+            dtype=torch.float32,
+            device=inputs.device,
+        )
+    scales_2d = scales.view(outputs_2d.size(0), hidden // group_size)
+    assert scales_2d.dtype == torch.float32
+    assert scales_2d.device == inputs.device
+
+    if not isinstance(inputs, FakeTensor):
+        assert inputs_2d.is_cuda
+        assert inputs_2d.is_contiguous()
+        assert outputs_2d.is_contiguous()
+        assert scales_2d.is_contiguous()
+
+        BLOCK = triton.next_power_of_2(group_size)
+        num_warps = min(max(group_size // 32, 1), 8)
+        _swiglu_clamp_quant_kernel[(outputs_2d.size(0), hidden // group_size)](
+            inputs_2d,
+            outputs_2d,
+            scales_2d,
+            inputs_2d.stride(0),
+            outputs_2d.stride(0),
+            scales_2d.stride(0),
+            hidden,
+            group_size,
+            swiglu_limit,
+            BLOCK,
+            num_warps=num_warps,
+            num_stages=1,
+        )
+
+    return outputs, scales_2d.view(*outputs.shape[:-1], scales_2d.size(-1))
+
+
 def quant_input(
     inputs: torch.Tensor,
     dtype: str,

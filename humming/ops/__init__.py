@@ -6,7 +6,7 @@ import torch
 from humming import dtypes
 from humming.kernel.humming import HummingKernel
 from humming.ops.bench import tops_bench  # noqa
-from humming.ops.input import quant_input
+from humming.ops.input import quant_input, swiglu_clamp_quant_input
 from humming.ops.moe import moe_fused_mul_sum
 from humming.ops.utils import init_humming_launcher, register_op
 from humming.ops.weight import (
@@ -142,6 +142,11 @@ def _humming_gemm_fake(
 
 
 register_op("humming::quant_input", quant_input, quant_input)
+register_op(
+    "humming::swiglu_clamp_quant_input",
+    swiglu_clamp_quant_input,
+    swiglu_clamp_quant_input,
+)
 register_op("humming::quant_weight", quant_weight, quant_weight)
 register_op("humming::dequant_weight", dequant_weight, dequant_weight)
 register_op("humming::repack_weight", repack_weight, repack_weight)
@@ -158,6 +163,7 @@ register_op(
 
 if not TYPE_CHECKING:
     quant_input = torch.ops.humming.quant_input
+    swiglu_clamp_quant_input = torch.ops.humming.swiglu_clamp_quant_input
     quant_weight = torch.ops.humming.quant_weight
     dequant_weight = torch.ops.humming.dequant_weight
     repack_weight = torch.ops.humming.repack_weight
@@ -170,6 +176,7 @@ if not TYPE_CHECKING:
 
 __all__ = [
     "quant_input",
+    "swiglu_clamp_quant_input",
     "quant_weight",
     "dequant_weight",
     "repack_weight",
