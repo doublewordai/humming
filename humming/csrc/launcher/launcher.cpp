@@ -1,9 +1,11 @@
 #define USE_CUDA 1
 
+#include <cstdlib>
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include <map>
 #include <pybind11/pybind11.h>
+#include <iostream>
 
 #include "./elf.h"
 #include "./tensor.h"
@@ -87,6 +89,11 @@ Tensor launch_kernel_impl(
   KernelLaunchData kernel_launch_data = find_kernel_launch_data(configs, valid_shape_m);
   KernelData &kernel_data = kernel_launch_data.kernel_data;
   int64_t &num_sms = kernel_launch_data.num_sms;
+  int64_t kernel_shape_m = shape_m;
+  if (kernel_data.gemm_type_id == 2 && valid_shape_m > 0) {
+    kernel_shape_m = valid_shape_m;
+  }
+
   Tensor c = may_make_tensor_c(c_, a, kernel_data, top_k);
   uint32_t num_ctas = kernel_data.num_ctas_per_sm * get_num_sms(num_sms, dev);
   Tensor tensor_map_buffer = make_tensor_map_buffer(a, kernel_data, num_ctas);
@@ -132,9 +139,9 @@ Tensor launch_kernel_impl(
     use_int64_expert_layout = expert_layout_.value().scalar_type() == ScalarType::Long;
   }
 
-  uint32_t shape_m_u32 = static_cast<uint32_t>(shape_m);
+  uint32_t shape_m_u32 = static_cast<uint32_t>(kernel_shape_m);
   uint32_t top_k_u32 = static_cast<uint32_t>(top_k);
-  ASSERT_CHECK(static_cast<int64_t>(shape_m_u32) == shape_m, "shape_m overflows uint32_t: ", shape_m);
+  ASSERT_CHECK(static_cast<int64_t>(shape_m_u32) == kernel_shape_m, "kernel_shape_m overflows uint32_t: ", kernel_shape_m);
   ASSERT_CHECK(static_cast<int64_t>(top_k_u32) == top_k, "top_k overflows uint32_t: ", top_k);
 
   void *kernel_args[] = {
@@ -180,6 +187,26 @@ Tensor launch_kernel_impl(
   CUfunction &func = kernel_data.func;
   constexpr auto SMEM_SIZE_ATTR = CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES;
   check_curesult(cuFuncSetAttribute(func, SMEM_SIZE_ATTR, kernel_data.smem_size), "cuFuncSetAttribute");
+  if (std::getenv("HUMMING_DEBUG_LAUNCH") != nullptr) {
+    std::cerr
+        << "[humming-launch]"
+        << " dev=" << dev
+        << " tensor_shape_m=" << shape_m
+        << " kernel_shape_m=" << kernel_shape_m
+        << " top_k=" << top_k
+        << " gemm_type_id=" << kernel_data.gemm_type_id
+        << " problem_n=" << kernel_data.problem_shape_n
+        << " problem_k=" << kernel_data.problem_shape_k
+        << " block=" << kernel_data.block_shape_m << "x" << kernel_data.block_shape_n << "x" << kernel_data.block_shape_k
+        << " threads=" << kernel_data.num_threads
+        << " num_sms=" << get_num_sms(num_sms, dev)
+        << " num_ctas=" << num_ctas
+        << " ctas_per_sm=" << kernel_data.num_ctas_per_sm
+        << " smem=" << kernel_data.smem_size
+        << " tma=" << kernel_data.use_tma_a << kernel_data.use_tma_b << kernel_data.use_tma_c << kernel_data.use_tma_bs
+        << " multicast=" << kernel_data.multi_cast_size_a << "x" << kernel_data.multi_cast_size_b
+        << std::endl;
+  }
   check_curesult(cuLaunchKernelEx(&config, func, kernel_args, nullptr), "cuLaunchKernelEx");
 
   return c;
