@@ -1,4 +1,5 @@
 import functools
+import os
 from typing import TYPE_CHECKING
 
 import torch
@@ -33,6 +34,22 @@ heuristics_map: dict[int, type[DeviceHeuristics]] = {
 }
 
 
+def get_forced_heuristics_class() -> type[DeviceHeuristics] | None:
+    override = os.environ.get("HUMMING_FORCE_HEURISTICS", "")
+    override = override.strip().lower().replace("-", "_")
+    if not override:
+        return None
+    if override in ("h20", "sm90_h20"):
+        return Sm90H20Heuristics
+    if override in ("sm90", "generic_sm90"):
+        return Sm90Heuristics
+    if override in ("sm100", "blackwell"):
+        return Sm100Heuristics
+    raise ValueError(
+        f"unsupported HUMMING_FORCE_HEURISTICS={override!r}"
+    )
+
+
 def get_heuristics_class(
     sm_version: int | tuple[int, int] | None = None,
     device: int | torch.device | None = None,
@@ -43,6 +60,9 @@ def get_heuristics_class(
         sm_version = sm_version[0] * 10 + sm_version[1]
     assert isinstance(sm_version, int)
     name = torch.cuda.get_device_name(device)
+    forced_cls = get_forced_heuristics_class()
+    if forced_cls is not None:
+        return forced_cls
     if "H20" in name and "H200" not in name:
         return Sm90H20Heuristics
 
