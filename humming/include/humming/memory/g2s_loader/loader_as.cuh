@@ -74,7 +74,14 @@ public:
           uint32_t smem_row = smem_offset / kSmemStride;
           uint32_t smem_col = smem_offset % kSmemStride;
 
-          uint32_t gmem_row = kIsIndexedGemm ? load_row_index : smem_row;
+          uint32_t gmem_row = smem_row;
+          if constexpr (kIsIndexedGemm) {
+            if constexpr (BlockShape::M <= kNumLoadThreads) {
+              gmem_row = load_row_index;
+            } else {
+              gmem_row = smem_row < BlockShape::M ? smem.rd_row_index[smem_row] : shape_m;
+            }
+          }
           uint32_t gmem_offset = gmem_row * kGmemStride + smem_col;
 
           const LoadType *gmem_ptr_load = reinterpret_cast<const LoadType *>(gmem_ptr);
