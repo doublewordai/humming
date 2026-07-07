@@ -60,6 +60,7 @@ public:
   uint32_t col_offset;
   uint32_t output_shape_m;
   uint32_t block_output_shape_m;
+  uint32_t row_index_parity = 0;
 
   CUDA_INLINE
   EpilogueGmemWriter(
@@ -104,7 +105,7 @@ public:
         uint32_t smem_offset_swizzled = smem_row * 8 + smem_col_swizzled;
         uint32_t gmem_row = smem_row % (BlockShape::M / kNumWriteSplits);
         if constexpr (kNumWriteSplits == 2) gmem_row += BlockShape::M / 2 * split_idx;
-        if constexpr (ComputeConfig::kGemmType == GemmType::INDEXED) gmem_row = smem.wr_row_index[gmem_row];
+        if constexpr (ComputeConfig::kGemmType == GemmType::INDEXED) gmem_row = smem.wr_row_index[row_index_parity][gmem_row];
         uint32_t gmem_col = smem_row / (BlockShape::M / kNumWriteSplits) * 8 + smem_col;
         bool pred1 = gmem_row < (kIsIndexedGemm ? output_shape_m : block_output_shape_m);
         bool pred2 = PadShape::N == 0 || (col_offset + gmem_col * 8 < ProblemShape::N - PadShape::N);

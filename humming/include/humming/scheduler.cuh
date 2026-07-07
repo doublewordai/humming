@@ -66,6 +66,11 @@ public:
   const uint32_t *row_index_blocks;
   const uint32_t *expert_ids;
   uint32_t top_k;
+  // Toggled once per scheduled block, identically in the producer and
+  // consumer thread groups; selects the wr_row_index buffer so the producer
+  // may stage block i+1's indices while the consumer's epilogue still reads
+  // block i's.
+  uint32_t row_index_parity = 0;
 
   // for grouped gemm
   uint32_t current_shape_m;
@@ -215,11 +220,11 @@ public:
 
     if constexpr (kIsIndexedGemm) {
       if (has_next_block) {
+        row_index_parity ^= 1;
         expert_id = expert_ids[m_block_id];
         // Under warp specialization the producer stages the row indices
-        // explicitly after the math epilogue barrier (see humming_ws.cuh):
-        // staging here would overwrite smem row indices the consumer's
-        // epilogue is still scattering with.
+        // explicitly (see humming_ws.cuh); staging here would overwrite smem
+        // row indices while the consumer group may still be using them.
         if constexpr (!kUseWarpSpec) fetch_moe_index_block();
       }
     }
@@ -298,21 +303,29 @@ public:
   void fetch_moe_index_block() {
     const uint32_t *gmem_ptr = row_index_blocks + m_block_id * BlockShape::M;
     const int4 *gmem_ptr_load = reinterpret_cast<const int4 *>(gmem_ptr);
-    int4 *smem_ptr_load = reinterpret_cast<int4 *>(smem.wr_row_index);
-
-    legacy_load_1d<kUseCpAsync, BlockShape::M / 4, kNumLoadThreads, kLoadThreadOffset>(gmem_ptr_load, smem_ptr_load);
-    if constexpr (kUseCpAsync) cp_async_commit_group();
-    if constexpr (kUseCpAsync) cp_async_wait_group<0>();
-
-    sync_part_threads<kNumLoadThreads, kNumThreads, 2>();
+    int4 *smem_ptr_load = reinterpret_cast<int4 *>(smem.wr_row_index[row_index_parity]);
 
     uint32_t thread_id = threadIdx.x;
     if constexpr (kUseWarpSpec) thread_id = thread_id - kNumMathThreads;
+
+    // Plain loads, not cp.async: a commit_group/wait_group<0> here would
+    // scoop up and drain the producer's in-flight stage loads at every block
+    // boundary.
+    PRAGMA_UNROLL
+    for (uint32_t i = 0; i < CEIL_DIV(BlockShape::M / 4, kNumLoadThreads); i++) {
+      uint32_t index = kNumLoadThreads * i + thread_id;
+      if (index < BlockShape::M / 4) {
+        smem_ptr_load[index] = gmem_ptr_load[index];
+      }
+    }
+
+    sync_part_threads<kNumLoadThreads, kNumThreads, 2>();
+
     PRAGMA_UNROLL
     for (uint32_t i = 0; i < CEIL_DIV(BlockShape::M, kNumLoadThreads); i++) {
       uint32_t index = kNumLoadThreads * i + thread_id;
       if (index < BlockShape::M) {
-        uint32_t idx = smem.wr_row_index[index];
+        uint32_t idx = smem.wr_row_index[row_index_parity][index];
         smem.rd_row_index[index] = idx / top_k;
       };
     }

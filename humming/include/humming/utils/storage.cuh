@@ -96,7 +96,19 @@ public:
   static constexpr uint32_t kNumWarpsDimK = BlockShape::K / WarpShape::K;
   static constexpr uint32_t kMmaCTypeBits = MmaOpClass::kCTypeBits;
   static constexpr uint32_t M_WARPS = (BlockShape::M / WarpShape::M);
-  static constexpr uint32_t kWarpReduceSize = M_WARPS * 16 * BlockShape::N * kMmaCTypeBits / 128 * (kNumWarpsDimK / 2);
+  // Exact footprint of EpilogueSmemReducer:
+  // int4[kNumWarpsDimK/2][num_groups][num_int4s_per_time][32]. The previous
+  // closed form (M_WARPS*16*N*bits/128*(K_WARPS/2)) undersizes it (e.g.
+  // [24,256,256]/[24,32,128]: 1024 vs 1536 int4s actually written); inside
+  // the union the overflow landed in dead stage buffers, but with a separate
+  // staging region it must be sized correctly.
+  static constexpr uint32_t kCPerThreadInt4s = WarpShape::M * WarpShape::N * kMmaCTypeBits / 8 / 32 / 16;
+  static constexpr uint32_t kReducePerTimeInt4s = kCPerThreadInt4s / MAX(WarpShape::M / 16, 1u);
+  static constexpr uint32_t kNumMathWarps = TuningConfig::kNumMathThreads / 32;
+  static constexpr uint32_t kWarpReduceSize =
+      kNumWarpsDimK <= 1
+          ? 0
+          : (kNumWarpsDimK / 2) * (kNumMathWarps / kNumWarpsDimK) * kReducePerTimeInt4s * 32;
   static constexpr uint32_t kBlockOutputSize = BlockShape::M * BlockShape::N / 2 / 4 / kNumWriteSplits;
   static constexpr uint32_t kNumZPBits = kIsFpZeroPoint ? 16 : MAX(4, static_next_power_of_2(ElementB::kBits));
 
@@ -147,6 +159,22 @@ public:
   static constexpr bool kIsIndexedGemm = ComputeConfig::kGemmType == GemmType::INDEXED;
   static constexpr bool kIsGroupedGemm = ComputeConfig::kGemmType == GemmType::GROUPED_CONTIGUOUS || ComputeConfig::kGemmType == GemmType::GROUPED_MASKED;
 
+  static constexpr uint32_t kReduceSize = MAX(kWarpReduceSize, kBlockOutputSize);
+  static constexpr bool kHasChannelData =
+      (kIsChannelInputScale || kIsChannelWeightScale || LayerConfig::kHasBias);
+  static constexpr uint32_t kStagePlusReduceBytes =
+      (kNumStages * (kStageSizeAStorage + kStageSizeBStorage + kStageSizeAS +
+                     kStageSizeBSStorage + kStageSizeBZPStorage) +
+       kChannelSizeAS + kChannelSizeBS + kBiasSize + kReduceSize) *
+      sizeof(int4);
+  // Free-running epilogue: give the epilogue its own staging region instead of
+  // aliasing the stage buffers, so the producer can prefetch block i+1 while
+  // the consumer scatters block i. Only worth it (and only race-audited) for
+  // warp-specialized indexed GEMM; requires the separate region to fit smem.
+  static constexpr bool kFreeRunning =
+      kUseWarpSpec && kIsIndexedGemm && !kHasChannelData &&
+      kStagePlusReduceBytes <= 220 * 1024;
+
   union alignas(128) {
     struct {
       alignas(128) int4 a[kNumStages][kStageSizeAStorage];
@@ -158,11 +186,18 @@ public:
       IF_HAS_BIAS(alignas(128) int4 bias[kBiasSize];)
       IF_HAS_CHANNEL_INPUT_SCALE(int4 as_c[kChannelSizeAS];)
     };
-    int4 reduce[MAX(kWarpReduceSize, kBlockOutputSize)];
+    int4 reduce[kFreeRunning ? 1 : kReduceSize];
   };
 
+  alignas(128) int4 reduce_sep[kFreeRunning ? kReduceSize : 1];
+
+  CUDA_INLINE int4 *reduce_buffer() {
+    if constexpr (kFreeRunning) return reduce_sep;
+    else return reduce;
+  }
+
   IF_IS_INDEXED_GEMM(uint32_t rd_row_index[BlockShape::M];)
-  IF_IS_INDEXED_GEMM(uint32_t wr_row_index[BlockShape::M];)
+  IF_IS_INDEXED_GEMM(uint32_t wr_row_index[2][BlockShape::M];)
 
   IF_IS_GROUPED_GEMM(CUtensorMap tensor_map_buffer[1];)
   IF_IS_GROUPED_GEMM(uint32_t expert_tokens[kNumExperts];)

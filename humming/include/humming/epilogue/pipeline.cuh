@@ -39,8 +39,8 @@ public:
       SharedStorage &smem, OutputPtrType output_ptr, CUtensorMap *tensor_map_buffer, ArithClass &arith,
       const uint32_t *GS, int32_t *locks, uint32_t output_shape_m, uint32_t top_k)
       : GS(GS), locks(locks), arith(arith),
-        smem_reducer(smem.reduce), smem_writer(smem.reduce, arith),
-        gmem_writer(arith, smem.reduce, output_ptr, smem, output_shape_m, top_k) {
+        smem_reducer(smem.reduce_buffer()), smem_writer(smem.reduce_buffer(), arith),
+        gmem_writer(arith, smem.reduce_buffer(), output_ptr, smem, output_shape_m, top_k) {
     if constexpr (TuningConfig::kUseTmaC) {
       if constexpr (kIsGroupedGemm) gmem_writer.update_tensor_map_ptr(tensor_map_buffer + blockIdx.x);
       else if (threadIdx.x == 0) prefetch_tensor_map(output_ptr);
@@ -96,8 +96,9 @@ public:
   }
 
   CUDA_INLINE
-  void seek(uint32_t expert_id, uint32_t m_block_id, uint32_t n_block_id, uint32_t current_shape_m, uint32_t m_offset) {
+  void seek(uint32_t expert_id, uint32_t m_block_id, uint32_t n_block_id, uint32_t current_shape_m, uint32_t m_offset, uint32_t row_index_parity = 0) {
     gmem_writer.seek(m_block_id, n_block_id, current_shape_m, m_offset);
+    gmem_writer.row_index_parity = row_index_parity;
     if constexpr (LayerConfig::kIsTensorWeightScale) {
       arith.gs = GS[ComputeConfig::kGemmType == GemmType::DENSE ? 0 : expert_id];
     }
