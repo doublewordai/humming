@@ -42,10 +42,19 @@ public:
   static constexpr uint32_t kSwizzleBytes = ElementA::kBits * BlockShape::K >= 1024 ? 128 : 64;
   static constexpr uint32_t kNumWarpShapeNSplits = WarpShape::N == ElementA::kBits * 2 ? 2 : 1;
 
+  static constexpr bool kUseProducerDequant = SharedStorage::kUseProducerDequant;
+  // Depth-2 wgmma pipelining is safe whenever no dequant cascade competes for
+  // registers AND the kernel reorders s2r after run() (the warp-specialized
+  // kernel does; the non-WS kernel keeps s2r-first order, so it stays at
+  // wait<0>).
+  static constexpr bool kDeepPipeline =
+      kUseProducerDequant ||
+      (SharedStorage::kUseWarpSpec && std::is_same<ElementA, ElementB>::value);
+
   SharedStorage &smem;
   ArithClass &arith;
-  uint32_t regs_qb[2][ElementB::kBits * (16 / ElementA::kBits)];
-  typename MmaOpClass::BRegisters regs_b[2][WarpShape::N * 4 / MmaShape::N][kPartMmaShapeK / MmaShape::K];
+  alignas(16) uint32_t regs_qb[2][kUseProducerDequant ? 1 : ElementB::kBits * (16 / ElementA::kBits)];
+  alignas(16) typename MmaOpClass::BRegisters regs_b[2][WarpShape::N * 4 / MmaShape::N][kPartMmaShapeK / MmaShape::K];
   typename MmaOpClass::CRegisters regs_c[2][WarpShape::N * 4 / MmaShape::N][WarpShape::M / MmaShape::M];
   uint32_t smem_offset = 0;
 
@@ -78,6 +87,9 @@ public:
 
   CUDA_INLINE
   void transform_b(uint32_t buffer_id) {
+    // Producer-dequant: fragments arrive in smem already dequanted to FP8 and
+    // the s2r pipeline loads them straight into regs_b.
+    if constexpr (kUseProducerDequant) return;
     if constexpr (std::is_same<ElementA, ElementB>::value) return;
 
     if constexpr (kUseFusedE8m0Scale) {
@@ -148,11 +160,18 @@ public:
           MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
         }
         wgmma_commit();
-        // wait<0> (not a deeper lag) is deliberate: releasing regs_b/regs_c
-        // back to ptxas here is what keeps the dequant cascade spill-free.
-        // Measured on GH200: wait<1> costs 218-1200 spill instructions and
-        // up to 3x at BlockM 96.
-        wgmma_wait<0>();
+        if constexpr (kUseProducerDequant) {
+          // No dequant cascade competes for registers, so one group may stay
+          // in flight; the group from the previous iteration (which read the
+          // regs_b buffer about to be refilled) must drain.
+          wgmma_wait<1>();
+        } else {
+          // wait<0> (not a deeper lag) is deliberate: releasing regs_b/regs_c
+          // back to ptxas here is what keeps the dequant cascade spill-free.
+          // Measured on GH200: wait<1> costs 218-1200 spill instructions and
+          // up to 3x at BlockM 96.
+          wgmma_wait<0>();
+        }
       }
     }
   };
@@ -172,7 +191,7 @@ public:
 
   template <class T = uint32_t>
   CUDA_INLINE T *regs_qb_as_ptr(uint32_t buffer_id) {
-    if constexpr (std::is_same<ElementA, ElementB>::value) {
+    if constexpr (kUseProducerDequant || std::is_same<ElementA, ElementB>::value) {
       return reinterpret_cast<T *>(regs_b[buffer_id]);
     } else {
       return reinterpret_cast<T *>(regs_qb[buffer_id]);

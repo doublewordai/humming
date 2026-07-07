@@ -49,6 +49,9 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
   constexpr uint32_t kNumThreads = TuningConfig::kNumThreads;
   constexpr uint32_t kNumStages = TuningConfig::kNumStages;
 
+  static_assert(!TuningConfig::kUseProducerDequant,
+                "producer dequant requires the warp-specialized kernel");
+
   using SharedStorage = SharedStorage<
       MmaOpClass, BlockShape, WarpShape, ElementA, ElementB, ElementBS,
       LayerConfig, ComputeConfig, TuningConfig>;

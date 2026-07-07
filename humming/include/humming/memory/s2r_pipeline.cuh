@@ -30,9 +30,14 @@ private:
   static constexpr bool kHasZeroPoint = LayerConfig::kHasZeroPoint;
   static constexpr bool kHasBias = LayerConfig::kHasBias;
 
+  static constexpr bool kUseProducerDequant = TuningConfig::kUseProducerDequant;
+
   using MmaOpClass = typename MMA::MmaOpClass;
   using LoaderA = S2RMemoryLoaderA<MmaOpClass, BlockShape, WarpShape, ElementA, TuningConfig>;
   using LoaderB = S2RMemoryLoaderB<BlockShape, WarpShape, ElementA, ElementB, TuningConfig>;
+  // Producer-dequant path: B fragments are already FP8 in smem.bf8, read with
+  // the same strided loader widened to ElementA.
+  using LoaderBF8 = S2RMemoryLoaderB<BlockShape, WarpShape, ElementA, ElementA, TuningConfig>;
   using LoaderAS = S2RMemoryLoaderAS<MmaOpClass, BlockShape, WarpShape, ElementA, LayerConfig, TuningConfig>;
   using LoaderBS = S2RMemoryLoaderBS<MmaOpClass, BlockShape, WarpShape, ElementA, ElementBS, LayerConfig, TuningConfig>;
   using LoaderBZP = S2RMemoryLoaderBZP<BlockShape, WarpShape, ElementA, ElementB, LayerConfig, TuningConfig>;
@@ -44,6 +49,7 @@ public:
   Epilogue &epilogue;
   LoaderA loader_a;
   LoaderB loader_b;
+  LoaderBF8 loader_bf8;
   LoaderAS loader_as;
   LoaderBS loader_bs;
   LoaderBZP loader_bzp;
@@ -60,12 +66,18 @@ public:
     iter_id = iter_id % kWarpItersK;
     uint32_t buffer_id = iter_id % 2;
 
-    loader_b.load(smem.b[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);
+    if constexpr (kUseProducerDequant) {
+      loader_bf8.load(smem.bf8[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);
+    } else {
+      loader_b.load(smem.b[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);
+    }
     if constexpr (!kUseWgmma)
       loader_a.load(smem.a[stage_id], mma.regs_a_as_ptr(buffer_id), iter_id);
     if constexpr (kIsGroupInputScale)
       loader_as.load(smem.as[stage_id], mma.arith.regs_as_as_ptr(buffer_id), iter_id);
-    if constexpr (kIsGroupOrBlockWeightScale)
+    // Weight scales are consumed by the producer's dequant under
+    // producer-dequant; the consumer no longer needs them.
+    if constexpr (kIsGroupOrBlockWeightScale && !kUseProducerDequant)
       loader_bs.load(smem.bs[stage_id], mma.arith.regs_bs_as_ptr(buffer_id), iter_id);
     if constexpr (kHasZeroPoint && (kIsGroupOrBlockWeightScale || kIsFirst))
       loader_bzp.load(smem.bzp[stage_id], mma.arith.regs_zp_as_ptr(buffer_id), iter_id);

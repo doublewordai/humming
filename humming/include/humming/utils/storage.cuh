@@ -71,6 +71,7 @@
 #endif
 
 
+
 template <
     class MmaOpClass,
     class BlockShape, class WarpShape,
@@ -125,6 +126,11 @@ public:
 
   static constexpr uint32_t kStageSizeA = BlockShape::M * kSmemStrideA;
   static constexpr uint32_t kStageSizeB = BlockShape::K / kPartMmaShapeK * kSmemStrideB;
+  // Producer-dequanted B fragments (FP8 at ElementA width), same thread-strided
+  // fragment layout as the quantized stage, widened to 8 bits.
+  static constexpr uint32_t kUseProducerDequant = TuningConfig::kUseProducerDequant;
+  static constexpr uint32_t kSmemStrideBF8 = BlockShape::N * kPartMmaShapeK * ElementA::kBits / 32 / 4;
+  static constexpr uint32_t kStageSizeBF8 = kUseProducerDequant ? BlockShape::K / kPartMmaShapeK * kSmemStrideBF8 : 0;
   static constexpr uint32_t kStageSizeAS = kNumGroupsA * BlockShape::M / 4;
   static constexpr uint32_t kStageSizeBS = kNumGroupsB * kSmemStrideBS;
   static constexpr uint32_t kStageSizeBZP = kNumGroupsB * kSmemStrideBZP;
@@ -164,7 +170,7 @@ public:
       (kIsChannelInputScale || kIsChannelWeightScale || LayerConfig::kHasBias);
   static constexpr uint32_t kStagePlusReduceBytes =
       (kNumStages * (kStageSizeAStorage + kStageSizeBStorage + kStageSizeAS +
-                     kStageSizeBSStorage + kStageSizeBZPStorage) +
+                     kStageSizeBSStorage + kStageSizeBZPStorage + kStageSizeBF8) +
        kChannelSizeAS + kChannelSizeBS + kBiasSize + kReduceSize) *
       sizeof(int4);
   // Free-running epilogue: give the epilogue its own staging region instead of
@@ -196,8 +202,13 @@ public:
     else return reduce;
   }
 
-  IF_IS_INDEXED_GEMM(uint32_t rd_row_index[BlockShape::M];)
-  IF_IS_INDEXED_GEMM(uint32_t wr_row_index[2][BlockShape::M];)
+  alignas(128) int4 bf8[kNumStages][kStageSizeBF8 ? kStageSizeBF8 : 1];
+  alignas(8) uint64_t dq_mbar[kUseProducerDequant ? kNumStages : 1];
+
+  // 16B alignment: both are staged with int4 loads/stores in
+  // fetch_moe_index_block.
+  IF_IS_INDEXED_GEMM(alignas(16) uint32_t rd_row_index[BlockShape::M];)
+  IF_IS_INDEXED_GEMM(alignas(16) uint32_t wr_row_index[2][BlockShape::M];)
 
   IF_IS_GROUPED_GEMM(CUtensorMap tensor_map_buffer[1];)
   IF_IS_GROUPED_GEMM(uint32_t expert_tokens[kNumExperts];)

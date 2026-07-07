@@ -140,6 +140,7 @@ class TuningConfig(BaseHummingConfig):
     use_warp_spec: bool | None = None
     use_mbarrier: bool | None = None
     use_cp_async: bool | None = None
+    use_producer_dequant: bool = False
 
     use_tma: bool | None = None
     use_tma_a: bool | None = None
@@ -168,6 +169,9 @@ class TuningConfig(BaseHummingConfig):
     def __post_init__(self):
         if self.use_warp_spec is None:
             self.use_warp_spec = False
+
+        if self.use_producer_dequant:
+            assert self.use_warp_spec, "producer dequant requires warp specialization"
 
         if self.use_tma is None:
             self.use_tma = False
