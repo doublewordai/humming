@@ -146,11 +146,20 @@ public:
         PRAGMA_UNROLL
         for (uint32_t j = 0; j < kNumIters; j++) {
           MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
-          wgmma_commit();
-          wgmma_wait<0>();
         }
+        wgmma_commit();
+        // wait<0> (not a deeper lag) is deliberate: releasing regs_b/regs_c
+        // back to ptxas here is what keeps the dequant cascade spill-free.
+        // Measured on GH200: wait<1> costs 218-1200 spill instructions and
+        // up to 3x at BlockM 96.
+        wgmma_wait<0>();
       }
     }
+  };
+
+  CUDA_INLINE
+  void wait_all() {
+    wgmma_wait<0>();
   };
 
   template <class T>

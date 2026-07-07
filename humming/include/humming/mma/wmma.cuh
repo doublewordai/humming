@@ -42,6 +42,10 @@ public:
   };
 
   CUDA_INLINE
+  void wait_all() {
+  };
+
+  CUDA_INLINE
   void transform_b(uint32_t buffer_id) {
     if constexpr (std::is_same<ElementA, ElementB>::value) return;
 

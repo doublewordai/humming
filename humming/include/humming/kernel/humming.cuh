@@ -148,6 +148,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       };
     };
 
+    mma.wait_all();
     consumer.wait_channel();
     s2r_pipe.load_channel(scheduler.slice_id);
     __syncthreads();

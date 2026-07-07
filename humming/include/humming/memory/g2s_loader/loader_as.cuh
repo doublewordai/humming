@@ -126,7 +126,10 @@ public:
       gmem_ptr = gmem_ptr_raw + col_offset;
 
       constexpr uint32_t kSmemStride = kNumGroups / (sizeof(LoadType) / 4);
-      uint32_t smem_row = threadIdx.x / kSmemStride;
+      // thread_id, not threadIdx.x: under warp specialization the load threads
+      // start at kLoadThreadOffset, and raw threadIdx.x pushes every producer
+      // thread past BlockShape::M so the input scales are never loaded.
+      uint32_t smem_row = thread_id / kSmemStride;
 
       if (smem_row < BlockShape::M) {
         load_row_index = smem.rd_row_index[smem_row];
