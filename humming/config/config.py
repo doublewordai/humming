@@ -141,6 +141,7 @@ class TuningConfig(BaseHummingConfig):
     use_mbarrier: bool | None = None
     use_cp_async: bool | None = None
     use_producer_dequant: bool = False
+    num_dequant_threads: int = 0
 
     use_tma: bool | None = None
     use_tma_a: bool | None = None
@@ -183,10 +184,13 @@ class TuningConfig(BaseHummingConfig):
             sm_version = torch.cuda.get_device_capability()
             self.use_cp_async = sm_version[0] >= 8
 
+        if self.num_dequant_threads:
+            assert self.use_producer_dequant
+
         self.num_math_threads = math.prod(self.block_shape) // math.prod(self.warp_shape) * 32
         if self.use_warp_spec:
             self.num_load_threads = 128
-            self.num_threads = self.num_math_threads + 128
+            self.num_threads = self.num_math_threads + 128 + self.num_dequant_threads
         else:
             self.num_load_threads = self.num_math_threads
             self.num_threads = self.num_math_threads

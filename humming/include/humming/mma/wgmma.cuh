@@ -50,6 +50,16 @@ public:
   static constexpr bool kDeepPipeline =
       kUseProducerDequant ||
       (SharedStorage::kUseWarpSpec && std::is_same<ElementA, ElementB>::value);
+  // desc x desc mode: producer dequants weights into canonical-layout FP8
+  // smem tiles (smem.bf8) and both wgmma operands are consumed by descriptor.
+  // Requires the group-input-scale fold to fire at least once per stage
+  // (kInputScaleGroupSize <= BlockShape::K), which is the only wgmma_wait in
+  // the mainloop.
+  static constexpr bool kDescMode =
+      kUseProducerDequant && LayerConfig::kInputScaleGroupSize > 0 &&
+      LayerConfig::kInputScaleGroupSize <= BlockShape::K;
+  // bf8 canonical tile: [warpgroup g][j] x 64 rows x BlockK bytes.
+  static constexpr uint32_t kBF8TileInt4s = 64 * BlockShape::K / 16;
 
   SharedStorage &smem;
   ArithClass &arith;
@@ -113,6 +123,10 @@ public:
 
   CUDA_INLINE
   void run(uint32_t stage_id, uint32_t iter_id) {
+    if constexpr (kDescMode) {
+      run_desc(stage_id, iter_id);
+      return;
+    }
     static_assert(WarpShape::M == MmaShape::M);
     uint32_t buffer_id = iter_id % 2;
 
@@ -172,6 +186,66 @@ public:
           // up to 3x at BlockM 96.
           wgmma_wait<0>();
         }
+      }
+    }
+  };
+
+  CUDA_INLINE
+  void run_desc(uint32_t stage_id, uint32_t iter_id) {
+    uint32_t warpgroup_id = threadIdx.x / 128;
+
+    PRAGMA_UNROLL
+    for (uint32_t k = 0; k < kPartMmaShapeK / MmaShape::K; k++) {
+      int4 *smem_ptr = smem.a[stage_id] + smem_offset + iter_id * 2 + k;
+      uint64_t desc_b = make_wgmma_smem_desc<kSwizzleBytes>(smem_ptr, iter_id);
+
+      constexpr uint32_t kNumIters = WarpShape::N / (MmaShape::N / 4);
+
+      bool scale_d = true;
+      bool apply_scale_on_c = false;
+      uint32_t k_index = iter_id * kPartMmaShapeK + (k + 1) * MmaShape::K;
+      uint32_t is_last_iter = iter_id == (kWarpItersK - 1);
+      if constexpr (ElementA::kBits != 16 && LayerConfig::kInputScaleGroupSize > 0) {
+        scale_d = (iter_id * kPartMmaShapeK) % LayerConfig::kInputScaleGroupSize > 0;
+        apply_scale_on_c = is_last_iter || (k_index % LayerConfig::kInputScaleGroupSize == 0);
+      }
+
+      // Fence only when generic code touched the accumulators since the last
+      // wgmma: at the start of an input-scale group (after zero_accum or the
+      // previous group's fold). Between pure-async iterations a fence is
+      // unnecessary issue serialization.
+      if (!scale_d) wgmma_fence();
+      if (apply_scale_on_c) {
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          int4 *bf8_ptr = smem.bf8[stage_id] + (warpgroup_id * kNumIters + j) * kBF8TileInt4s + iter_id * 2 + k;
+          uint64_t desc_a = make_wgmma_smem_desc<kSwizzleBytes>(bf8_ptr, iter_id);
+          fence_regs(regs_c[0][j][0]);
+          MmaOpClass::fma_dd(desc_a, desc_b, regs_c[0][j][0], scale_d);
+        }
+        wgmma_commit();
+        wgmma_wait<0>();
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          fence_regs(regs_c[0][j][0]);
+          arith.apply_fused_group_as_on_wgmma_c(regs_c_as_ptr(), j, iter_id);
+        }
+      } else {
+        // No wait: with no register operands the only wgmma-owned registers
+        // are the accumulators, and the group-scale fold above drains the
+        // pipeline once per input-scale group (>= once per stage).
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          int4 *bf8_ptr = smem.bf8[stage_id] + (warpgroup_id * kNumIters + j) * kBF8TileInt4s + iter_id * 2 + k;
+          uint64_t desc_a = make_wgmma_smem_desc<kSwizzleBytes>(bf8_ptr, iter_id);
+#ifdef HUMMING_PERF_PROBE_REG_FMA
+          MmaOpClass::fma(desc_b, regs_b[0][j][0], regs_c[0][j][0], scale_d);
+          (void)desc_a;
+#else
+          MmaOpClass::fma_dd(desc_a, desc_b, regs_c[0][j][0], scale_d);
+#endif
+        }
+        wgmma_commit();
       }
     }
   };

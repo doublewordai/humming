@@ -306,7 +306,7 @@ public:
     int4 *smem_ptr_load = reinterpret_cast<int4 *>(smem.wr_row_index[row_index_parity]);
 
     uint32_t thread_id = threadIdx.x;
-    if constexpr (kUseWarpSpec) thread_id = thread_id - kNumMathThreads;
+    if constexpr (kUseWarpSpec) thread_id = thread_id - kLoadThreadOffset;
 
     // Plain loads, not cp.async: a commit_group/wait_group<0> here would
     // scoop up and drain the producer's in-flight stage loads at every block

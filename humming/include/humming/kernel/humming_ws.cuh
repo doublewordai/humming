@@ -63,6 +63,9 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
   constexpr bool kFreeRunning =
       SharedStorage::kFreeRunning && !TuningConfig::kUseStreamK &&
       (ProblemShape::K / BlockShape::K) % kNumStages == 0;
+  constexpr bool kDescMode =
+      TuningConfig::kUseProducerDequant && LayerConfig::kInputScaleGroupSize > 0 &&
+      LayerConfig::kInputScaleGroupSize <= BlockShape::K;
   using Scheduler = Scheduler<
       SharedStorage, ProblemShape, BlockShape,
       LayerConfig, ComputeConfig, TuningConfig>;
@@ -98,11 +101,15 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
   auto pbzp = [&]() {if constexpr (TuningConfig::kUseTmaBZP) return &BZP; else return BZP; };
   auto pbias = [&]() {if constexpr (TuningConfig::kUseTmaBias) return &Bias; else return Bias; };
   auto scheduler = Scheduler(smem, pc(), tensor_map_buffer, shape_m, top_k, sorted_ids_ptr, expert_ids_ptr, num_tokens_padded_ptr, expert_layout_ptr, use_int64_expert_layout);
-  if (threadIdx.x >= TuningConfig::kNumMathThreads) {
-    // Producer-dequant runs with small blocks (128+128); every thread can hold
-    // the full per-thread register budget, so skip the reallocation and leave
-    // the producer warps enough registers for the dequant cascade.
-    if constexpr (TuningConfig::kUseProducerDequant) {
+  if (threadIdx.x >= TuningConfig::kNumThreads - TuningConfig::kNumLoadThreads) {
+    // Producer-dequant: at 256 threads every thread already has the full
+    // budget; with more threads rebalance so the math warpgroups get 184,
+    // the loader warpgroup 40, and the dequant warpgroup the remainder.
+    if constexpr (TuningConfig::kUseProducerDequant && TuningConfig::kNumDequantThreads > 0) {
+      asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" ::"n"(40));
+    } else if constexpr (TuningConfig::kUseProducerDequant && TuningConfig::kNumThreads > 256) {
+      asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" ::"n"(96));
+    } else if constexpr (TuningConfig::kUseProducerDequant) {
     } else if constexpr (TuningConfig::kNumMathThreads > 256) {
       asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" ::"n"(40));
     } else if constexpr (TuningConfig::kNumCtasPerSm == 1 && ElementA::kBits != 16) {
@@ -149,12 +156,10 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
         PRAGMA_UNROLL
         for (uint32_t stage_id = 0; stage_id < kNumStages; stage_id++) {
           if (slice_iters == 1) producer.load_channel();
-          // Dequant BEFORE the math-mbar wait: the consumer cannot make
-          // progress on this stage (and hence arrive) until dq_mbar fires.
-          // Overwrite of bf8[stage] is safe: the previous-round math arrive
-          // for this stage (consumed one round ago) implies the consumer
-          // finished reading it.
-          if constexpr (TuningConfig::kUseProducerDequant) {
+          // Dequant BEFORE the math-mbar wait: it can run as soon as the
+          // previous consumer arrive fired, overlapping the wait window.
+          // With a dedicated dequant warpgroup this loop only issues loads.
+          if constexpr (TuningConfig::kUseProducerDequant && TuningConfig::kNumDequantThreads == 0) {
             dq.process_stage(stage_id, first_block_iter && stage_id == 0);
           }
           producer.wait_stage(stage_id);
@@ -165,9 +170,45 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
         first_block_iter = false;
       }
     }
+  } else if (TuningConfig::kNumDequantThreads > 0 && threadIdx.x >= TuningConfig::kNumMathThreads) {
+    // Dedicated dequant warpgroup: consumes quantized stages the loader
+    // group cp.async'd, produces canonical FP8 tiles for the consumer's
+    // wgmma descriptors. Runs its own scheduler walk; synchronizes with the
+    // loader via load_mbar (data ready) and with the consumer via math_mbar
+    // (bf8 slot free; the consumer arrives post-fold in desc mode) and
+    // dq_mbar (tile ready).
+    if constexpr (TuningConfig::kNumDequantThreads > 0) {
+      asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" ::"n"(88));
+
+      using ProducerDequant = ProducerDequantB<
+          MmaOpClass, SharedStorage, BlockShape, WarpShape,
+          ElementA, ElementB, ElementBS, LayerConfig, TuningConfig>;
+      auto dq = ProducerDequant(smem);
+      __syncthreads();
+
+      uint32_t dq_iteration = 0;
+      while (scheduler.get_next_block()) {
+        uint32_t &slice_iters = scheduler.slice_iters;
+        bool first_block_iter = true;
+        while (slice_iters) {
+          PRAGMA_UNROLL
+          for (uint32_t stage_id = 0; stage_id < kNumStages; stage_id++) {
+            // bf8 slot reuse licence: skip while the ring is first filling.
+            if (dq_iteration >= kNumStages) dq.wait_math_licence(stage_id);
+            dq.process_stage(stage_id, first_block_iter && stage_id == 0);
+            dq_iteration++;
+            slice_iters--;
+            if (!slice_iters) break;
+          }
+          first_block_iter = false;
+        }
+      }
+    }
   } else {
     if constexpr (TuningConfig::kNumMathThreads > 256) {
       asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" ::"n"(96));
+    } else if constexpr (TuningConfig::kUseProducerDequant && TuningConfig::kNumThreads > 256) {
+      asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" ::"n"(184));
     } else if constexpr (!TuningConfig::kUseProducerDequant) {
       asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" ::"n"(232));
     }
@@ -191,7 +232,6 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       epilogue.set_streamk_state(scheduler.slice_count, scheduler.slice_id, scheduler.locks_offset);
 
       consumer.wait_stage<true>(kNumStages);
-      consumer.wait_dq(0);
       s2r_pipe.load_stage_iter<true>(0, 0);
       mma.transform_b(0);
 
@@ -201,6 +241,11 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
           constexpr uint32_t kPartMmaShapeK = 256 / ElementA::kBits;
           constexpr uint32_t warp_k_iters = WarpShape::K / kPartMmaShapeK;
 
+          // In desc mode the bf8 tile is first touched by this stage's first
+          // wgmma, so the dequant handshake waits here (a full producer
+          // stage of slack) instead of inside the previous stage's k-2 slot.
+          consumer.wait_dq(stage_id);
+
           PRAGMA_UNROLL
           for (uint32_t warp_k_iter_id = 0; warp_k_iter_id < warp_k_iters; warp_k_iter_id++) {
             if constexpr (TuningConfig::kUseProducerDequant || std::is_same<ElementA, ElementB>::value) {
@@ -209,10 +254,12 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
               // regs_b buffer the next s2r refills.
               mma.run(stage_id, warp_k_iter_id);
               if (warp_k_iter_id == warp_k_iters - 2) {
-                consumer.arrive(stage_id);
+                // Desc mode arrives post-fold instead (below): the arrive is
+                // the dequant group's licence that all wgmma reads of this
+                // stage's bf8 tile have completed.
+                if constexpr (!kDescMode) consumer.arrive(stage_id);
                 if (slice_iters > 1) {
                   consumer.wait_stage((stage_id + 1) % kNumStages);
-                  consumer.wait_dq((stage_id + 1) % kNumStages);
                 }
               }
               s2r_pipe.load_stage_iter(stage_id, warp_k_iter_id + 1);
@@ -230,6 +277,8 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
               mma.transform_b((warp_k_iter_id + 1) % 2);
             }
           }
+
+          if constexpr (kDescMode) consumer.arrive(stage_id);
 
           slice_iters--;
           if (!slice_iters) break;
