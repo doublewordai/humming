@@ -52,6 +52,16 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
   using SharedStorage = SharedStorage<
       MmaOpClass, BlockShape, WarpShape, ElementA, ElementB, ElementBS,
       LayerConfig, ComputeConfig, TuningConfig>;
+
+  // Producer may run into block i+1 without waiting for the consumer's
+  // epilogue of block i. Requires the dedicated epilogue staging region
+  // (SharedStorage::kFreeRunning) plus: whole blocks per slice (no stream-K)
+  // and K_BLOCKS a multiple of the stage count, so a block's final stage lands
+  // in slot kNumStages-1 and the initial loads of the next block (slots
+  // 0..kNumStages-2) are all covered by already-consumed mbarrier arrivals.
+  constexpr bool kFreeRunning =
+      SharedStorage::kFreeRunning && !TuningConfig::kUseStreamK &&
+      (ProblemShape::K / BlockShape::K) % kNumStages == 0;
   using Scheduler = Scheduler<
       SharedStorage, ProblemShape, BlockShape,
       LayerConfig, ComputeConfig, TuningConfig>;
@@ -102,11 +112,16 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     while (scheduler.get_next_block()) {
       uint32_t &slice_iters = scheduler.slice_iters;
 
-      // The epilogue barrier must come first: the consumer's epilogue for the
-      // previous block reads smem row indices (and its output staging aliases
-      // the stage buffers), so both the indexed row-index staging and stage 0
-      // loads have to wait for it.
-      producer.wait_math_epilogue();
+      // Without a dedicated epilogue staging region (kFreeRunning), the
+      // consumer's epilogue for the previous block reads smem the stage
+      // buffers alias, so staging and stage-0 loads must wait for it. With
+      // kFreeRunning the stage-slot mbarrier ring alone is sufficient: the
+      // producer's next-block slot writes are gated by the consumer's
+      // per-stage arrivals, the epilogue staging is separate smem, and the
+      // row indices are double-buffered by block parity.
+      if constexpr (!kFreeRunning) {
+        producer.wait_math_epilogue();
+      }
       if constexpr (ComputeConfig::kGemmType == GemmType::INDEXED) {
         scheduler.fetch_moe_index_block();
       }
@@ -144,13 +159,13 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
 
     consumer.init_mbarrier();
     __syncthreads();
-    consumer.arrive(kNumStages);
+    if constexpr (!kFreeRunning) consumer.arrive(kNumStages);
 
     while (scheduler.get_next_block()) {
       mma.zero_accum();
 
       uint32_t &slice_iters = scheduler.slice_iters;
-      epilogue.seek(scheduler.expert_id, scheduler.m_block_id, scheduler.n_block_id, scheduler.current_shape_m, scheduler.m_offset);
+      epilogue.seek(scheduler.expert_id, scheduler.m_block_id, scheduler.n_block_id, scheduler.current_shape_m, scheduler.m_offset, scheduler.row_index_parity);
       epilogue.set_streamk_state(scheduler.slice_count, scheduler.slice_id, scheduler.locks_offset);
 
       consumer.wait_stage<true>(kNumStages);
@@ -187,7 +202,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       s2r_pipe.load_channel(scheduler.slice_id);
       epilogue.call(mma.final_regs_c_as_ptr());
       if constexpr (TuningConfig::kUseTmaC) tma_wait_store_group<0, true>();
-      consumer.arrive(kNumStages);
+      if constexpr (!kFreeRunning) consumer.arrive(kNumStages);
     }
   }
 
