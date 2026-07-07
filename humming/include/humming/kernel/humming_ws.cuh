@@ -102,8 +102,15 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     while (scheduler.get_next_block()) {
       uint32_t &slice_iters = scheduler.slice_iters;
 
-      producer.seek(scheduler.expert_id, scheduler.m_block_id, scheduler.n_block_id, scheduler.k_block_id, scheduler.current_shape_m, scheduler.m_offset);
+      // The epilogue barrier must come first: the consumer's epilogue for the
+      // previous block reads smem row indices (and its output staging aliases
+      // the stage buffers), so both the indexed row-index staging and stage 0
+      // loads have to wait for it.
       producer.wait_math_epilogue();
+      if constexpr (ComputeConfig::kGemmType == GemmType::INDEXED) {
+        scheduler.fetch_moe_index_block();
+      }
+      producer.seek(scheduler.expert_id, scheduler.m_block_id, scheduler.n_block_id, scheduler.k_block_id, scheduler.current_shape_m, scheduler.m_offset);
       producer.load_stage<true, true>(0);
       PRAGMA_UNROLL
       for (uint32_t stage_id = 1; stage_id < kNumStages - 1; stage_id++) {
@@ -175,6 +182,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
         };
       };
 
+      mma.wait_all();
       consumer.wait_channel();
       s2r_pipe.load_channel(scheduler.slice_id);
       epilogue.call(mma.final_regs_c_as_ptr());

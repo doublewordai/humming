@@ -1,4 +1,5 @@
 import math
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -81,6 +82,11 @@ class Sm90Heuristics(DeviceHeuristics):
             if meta.shape_n % (block_shape_n * 2) == 0 and shape_m / block_shape_m >= 4:
                 if gemm_type == GemmType.DENSE:
                     config["multi_cast_size_a"] = 2
+        elif os.environ.get("HUMMING_INDEXED_WARP_SPEC", "1") == "1":
+            # Indexed gathers can't use TMA for A, but the producer/consumer
+            # split works with cp.async + mbarriers.
+            config["use_warp_spec"] = True
+            config["use_mbarrier"] = True
 
         return config
 
@@ -122,6 +128,9 @@ class Sm90Heuristics(DeviceHeuristics):
 
             if shape_m / block_shape_m >= 4 and gemm_type == GemmType.DENSE:
                 config["multi_cast_size_a"] = 2
+        elif os.environ.get("HUMMING_INDEXED_WARP_SPEC", "1") == "1":
+            config["use_warp_spec"] = True
+            config["use_mbarrier"] = True
 
         return config
 

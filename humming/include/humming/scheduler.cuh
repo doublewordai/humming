@@ -214,7 +214,14 @@ public:
     }
 
     if constexpr (kIsIndexedGemm) {
-      if (has_next_block) fetch_moe_index_block();
+      if (has_next_block) {
+        expert_id = expert_ids[m_block_id];
+        // Under warp specialization the producer stages the row indices
+        // explicitly after the math epilogue barrier (see humming_ws.cuh):
+        // staging here would overwrite smem row indices the consumer's
+        // epilogue is still scattering with.
+        if constexpr (!kUseWarpSpec) fetch_moe_index_block();
+      }
     }
     if constexpr (kIsGroupedGemm) {
       if (has_next_block) fetch_moe_group_block();
@@ -289,15 +296,11 @@ public:
 
   CUDA_INLINE
   void fetch_moe_index_block() {
-    if (kUseWarpSpec && threadIdx.x < kNumMathThreads) return;
-
-    expert_id = expert_ids[m_block_id];
-
     const uint32_t *gmem_ptr = row_index_blocks + m_block_id * BlockShape::M;
     const int4 *gmem_ptr_load = reinterpret_cast<const int4 *>(gmem_ptr);
     int4 *smem_ptr_load = reinterpret_cast<int4 *>(smem.wr_row_index);
 
-    legacy_load_1d<kUseCpAsync, BlockShape::M / 4, kNumLoadThreads>(gmem_ptr_load, smem_ptr_load);
+    legacy_load_1d<kUseCpAsync, BlockShape::M / 4, kNumLoadThreads, kLoadThreadOffset>(gmem_ptr_load, smem_ptr_load);
     if constexpr (kUseCpAsync) cp_async_commit_group();
     if constexpr (kUseCpAsync) cp_async_wait_group<0>();
 

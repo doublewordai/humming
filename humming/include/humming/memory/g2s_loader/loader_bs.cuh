@@ -32,6 +32,7 @@ private:
   static constexpr uint32_t kLoadsPerGroup = kIsChannel ? 1 : CEIL_DIV(kGroupSize, BlockShape::K);
 
 public:
+  const uint32_t thread_id = threadIdx.x - kLoadThreadOffset;
   const CUtensorMap *tensor_map_ptr;
   const int4 *gmem_ptr_raw;
   const int4 *gmem_ptr;
@@ -66,14 +67,14 @@ public:
   void load_legacy(int4 *smem_ptr) {
     if constexpr (kIsBlock) {
       constexpr uint32_t kLoadStride = ProblemShape::N / kGroupSizeN;
-      if (threadIdx.x < CEIL_DIV(BlockShape::K, kGroupSize) * CEIL_DIV(BlockShape::N, kGroupSizeN)) {
+      if (thread_id < CEIL_DIV(BlockShape::K, kGroupSize) * CEIL_DIV(BlockShape::N, kGroupSizeN)) {
         const uint32_t *gmem_ptr_load = reinterpret_cast<const uint32_t *>(gmem_ptr_raw);
         uint32_t *smem_ptr_load = reinterpret_cast<uint32_t *>(smem_ptr);
 
-        const uint32_t gmem_row = row_offset + threadIdx.x / CEIL_DIV(BlockShape::N, kGroupSizeN);
-        const uint32_t gmem_col = col_offset + threadIdx.x % CEIL_DIV(BlockShape::N, kGroupSizeN);
+        const uint32_t gmem_row = row_offset + thread_id / CEIL_DIV(BlockShape::N, kGroupSizeN);
+        const uint32_t gmem_col = col_offset + thread_id % CEIL_DIV(BlockShape::N, kGroupSizeN);
         uint32_t gmem_index = gmem_row * kLoadStride + gmem_col;
-        legacy_load<TuningConfig::kUseCpAsync>(&gmem_ptr_load[gmem_index], &smem_ptr_load[threadIdx.x]);
+        legacy_load<TuningConfig::kUseCpAsync>(&gmem_ptr_load[gmem_index], &smem_ptr_load[thread_id]);
       }
     } else {
       legacy_load_2d<
