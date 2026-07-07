@@ -48,3 +48,24 @@ __global__ void tops_bench(uint32_t *out_ptr) {
 
   if (threadIdx.x == 8192) out_ptr[0] = reinterpret_cast<uint32_t *>(&regs_c)[0];
 };
+
+template <class MmaOpClass, uint32_t kRepeatCount, uint32_t kUnrollCount, uint32_t kWaitEvery>
+__global__ void tops_bench_dd(uint32_t *out_ptr) {
+
+  typename MmaOpClass::CRegisters regs_c;
+
+  __shared__ alignas(1024) int4 smem[2048];
+  uint64_t desc_a = make_wgmma_smem_desc<128>(smem, 0);
+  uint64_t desc_b = make_wgmma_smem_desc<128>(smem + 1024, 0);
+
+  wgmma_fence();
+  PRAGMA_UNROLL_COUNT(kUnrollCount)
+  for (uint32_t i = 0; i < kRepeatCount; i++) {
+    MmaOpClass::fma_dd(desc_a, desc_b, regs_c);
+    wgmma_commit();
+    if (i % kWaitEvery == kWaitEvery - 1) wgmma_wait<0>();
+  }
+  wgmma_wait<0>();
+
+  if (threadIdx.x == 8192) out_ptr[0] = reinterpret_cast<uint32_t *>(&regs_c)[0];
+};

@@ -194,11 +194,68 @@ class WgmmaOpClassImpl:
             "};",
         ]
 
+        # desc x desc form: both operands from shared-memory descriptors. Only
+        # emitted when the wgmma A slot (= project B after the swap) can be a
+        # smem-resident tile of the same FP8 dtype as the activations.
+        if self.a_dtype in ["e4m3", "e5m2"] and self.b_dtype == self.a_dtype:
+            lines += [
+                "",
+                "CUDA_INLINE",
+                f"static void fma_dd(uint64_t &desc_a, uint64_t &desc_b, {reg_cd_type} *d, bool pred = true) {{",
+                *self.generate_ptx_dd(indent=2).strip("\n").split("\n"),
+                "};",
+            ]
+
         code = "\n".join("  " + x if x else x for x in lines)
         if include_class_name:
             code = f"class MmaOpClass {{\n{code}\n}};"
 
         return code
+
+    def generate_ptx_dd(self, indent=2):
+        cd_dtype = self.cd_dtype
+        m, n, k = self.shape
+
+        # Same M<->N / dtype swap as generate_ptx; A slot is desc_a (weights),
+        # B slot is desc_b (activations).
+        asm_op = f"wgmma.mma_async.sync.aligned.m{n}n{m}k{k}"
+        asm_op += f".{cd_dtype}.{self.b_dtype}.{self.a_dtype}"
+
+        placeholder = "{" + ", ".join(f"%{x}" for x in range(self.reg_cd_count)) + "}"
+        placeholder += f", %{self.reg_cd_count}, %{self.reg_cd_count + 1}"
+
+        cd_params = []
+        for i in range(self.reg_cd_count):
+            t = "f" if cd_dtype == "f32" else "r"
+            cd_params.append(f'"+{t}"(d[{i}])')
+
+        cd_param_str = ""
+        for i in range(math.ceil(len(cd_params) / 4)):
+            part = cd_params[i * 4 : (i + 1) * 4]
+            part_str = ", ".join(part) + ",\n"
+            if cd_param_str:
+                part_str = "    " + part_str
+            cd_param_str += part_str
+        cd_param_str = cd_param_str.strip().strip(",")
+
+        asm_code = f"""
+        asm volatile(
+          "{{\\n"
+            ".reg .pred p;\\n"
+            "setp.ne.b32 p, %{self.reg_cd_count + 2}, 0;\\n"
+            "{asm_op} "
+            "{placeholder}, p, 1, 1;\\n"
+          "}}\\n"
+          : {cd_param_str}
+          : "l"(desc_a), "l"(desc_b), "r"((uint32_t)pred)
+        );
+        """
+
+        space_count = len(re.findall("^\n( +)", asm_code)[0])
+        asm_code = asm_code.replace("\n" + " " * space_count, "\n").strip()
+        asm_code = "".join("\n" + " " * indent + x for x in asm_code.split("\n"))
+
+        return asm_code
 
     def generate_ptx(self, indent=2, has_scale_d=True):
         a_dtype = self.a_dtype

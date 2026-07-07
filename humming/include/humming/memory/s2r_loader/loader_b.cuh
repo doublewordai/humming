@@ -24,8 +24,8 @@ private:
 
 public:
   CUDA_INLINE
-  void load(const int4 *smem_ptr, uint32_t *regs_ptr, uint32_t iter_id) {
-    uint32_t warp_id = (threadIdx.x / 32);
+  void load(const int4 *smem_ptr, uint32_t *regs_ptr, uint32_t iter_id, uint32_t warp_id_override = 0xffffffffu) {
+    uint32_t warp_id = warp_id_override != 0xffffffffu ? warp_id_override : (threadIdx.x / 32);
     uint32_t n_warp_id = warp_id % N_WARPS;
     if (kIsWarpHalfGroup) n_warp_id = n_warp_id / 2;
     uint32_t lane_id = threadIdx.x % 32;

@@ -42,11 +42,11 @@ private:
 
 public:
   CUDA_INLINE
-  void load(const int4 *smem_ptr, uint32_t *regs_ptr, int32_t iter_id) {
+  void load(const int4 *smem_ptr, uint32_t *regs_ptr, int32_t iter_id, uint32_t warp_id_override = 0xffffffffu) {
     if constexpr (kIsBlock) {
       load_block(smem_ptr, regs_ptr, iter_id);
     } else {
-      load_group_or_channel(smem_ptr, regs_ptr, iter_id);
+      load_group_or_channel(smem_ptr, regs_ptr, iter_id, warp_id_override);
     }
   }
 
@@ -67,10 +67,12 @@ public:
   };
 
   CUDA_INLINE
-  void load_group_or_channel(const int4 *smem_ptr, uint32_t *regs_ptr, int32_t iter_id) {
+  void load_group_or_channel(const int4 *smem_ptr, uint32_t *regs_ptr, int32_t iter_id, uint32_t warp_id_override = 0xffffffffu) {
     // Fold so producer-dequant warps (warp_id >= math warps) alias the math
     // warp whose fragments they produce; identity for math warps.
-    uint32_t warp_id = threadIdx.x / 32 % (M_WARPS * N_WARPS * K_WARPS);
+    uint32_t warp_id = warp_id_override != 0xffffffffu
+                           ? warp_id_override
+                           : threadIdx.x / 32 % (M_WARPS * N_WARPS * K_WARPS);
 
     uint32_t n_warp_id = warp_id % N_WARPS / kNumWarpsPerMiniBlock;
     constexpr uint32_t warp_load_delta = (16 / kNumScalesPerSubBlock);

@@ -100,19 +100,27 @@ class Sm90Heuristics(DeviceHeuristics):
             if (
                 os.environ.get("HUMMING_INDEXED_PDQ", "0") == "1"
                 and meta.use_fused_e8m0_scale
+                and meta.input_scale_group_size > 0
+                and meta.input_scale_group_size <= warp_shape_k
                 and block_shape_m <= 96
             ):
-                # Producer-dequant shape: one math warpgroup (BlockN 128) plus
-                # one producer/dequant warpgroup; B fragments land in smem as
-                # FP8 so the math warps issue no dequant instructions.
-                # BlockM capped at 64: one warpgroup with the double
+                # Producer-dequant desc x desc shape: two math warpgroups
+                # (BlockN 256) plus one producer/dequant warpgroup; weights are
+                # dequanted into canonical FP8 smem and both wgmma operands are
+                # consumed by descriptor. BlockM capped at 64: the double
                 # accumulator needs ~2*BlockM regs/thread for C alone, and 96
                 # rows (~264 regs live) exceeds the 255-reg architectural
                 # ceiling -> unavoidable spills (measured 192-1100 LDL/STL).
+                # 3 stages: quant + canonical-FP8 + A stage smem at BlockN 256
+                # exceeds the 227KB carveout at 4.
                 pdq_block_m = min(block_shape_m, 64)
-                config["block_shape"] = (pdq_block_m, 128, warp_shape_k)
+                config["block_shape"] = (pdq_block_m, 256, warp_shape_k)
                 config["warp_shape"] = (pdq_block_m, 32, warp_shape_k)
+                config["num_stages"] = 3
                 config["use_producer_dequant"] = True
+                # Dedicated dequant warpgroup: loads and dequant run on
+                # separate warps so neither serializes the other.
+                config["num_dequant_threads"] = 128
 
         return config
 

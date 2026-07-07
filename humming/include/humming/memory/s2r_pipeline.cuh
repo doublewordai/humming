@@ -31,6 +31,10 @@ private:
   static constexpr bool kHasBias = LayerConfig::kHasBias;
 
   static constexpr bool kUseProducerDequant = TuningConfig::kUseProducerDequant;
+  // desc x desc mode: the consumer reads B via wgmma descriptor, no s2r at all.
+  static constexpr bool kDescMode =
+      kUseProducerDequant && LayerConfig::kInputScaleGroupSize > 0 &&
+      LayerConfig::kInputScaleGroupSize <= BlockShape::K;
 
   using MmaOpClass = typename MMA::MmaOpClass;
   using LoaderA = S2RMemoryLoaderA<MmaOpClass, BlockShape, WarpShape, ElementA, TuningConfig>;
@@ -66,7 +70,9 @@ public:
     iter_id = iter_id % kWarpItersK;
     uint32_t buffer_id = iter_id % 2;
 
-    if constexpr (kUseProducerDequant) {
+    if constexpr (kDescMode) {
+      // B is consumed by descriptor straight from smem.bf8.
+    } else if constexpr (kUseProducerDequant) {
       loader_bf8.load(smem.bf8[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);
     } else {
       loader_b.load(smem.b[stage_id], mma.regs_qb_as_ptr(buffer_id), iter_id);

@@ -32,6 +32,8 @@ class TopsBenchKernel(KernelRuntime):
     cd_dtype: str | dtypes.DataType
     repeat_count: int
     unroll_count: int
+    use_desc: bool = False
+    wait_every: int = 1
 
     def init_kernel(self):
         if isinstance(self.mma_type, str):
@@ -56,7 +58,10 @@ class TopsBenchKernel(KernelRuntime):
             repeat_count=self.repeat_count,
             unroll_count=self.unroll_count,
         )
-        self.kernel_expr = f"tops_bench<MmaOpClass, {self.repeat_count}, {self.unroll_count}>"
+        if self.use_desc:
+            self.kernel_expr = f"tops_bench_dd<MmaOpClass, {self.repeat_count}, {self.unroll_count}, {self.wait_every}>"
+        else:
+            self.kernel_expr = f"tops_bench<MmaOpClass, {self.repeat_count}, {self.unroll_count}>"
         self.arg_types = (ctypes.c_void_p,)
         self.prepare()
 

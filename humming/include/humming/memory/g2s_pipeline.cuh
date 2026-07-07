@@ -172,8 +172,10 @@ public:
         if (thread_id < kNumStages + 1) __mbarrier_init(&smem.math_mbar[thread_id], TuningConfig::kNumMathThreads * factor / 32);
       }
       if constexpr (TuningConfig::kUseProducerDequant) {
-        // One arrive per producer warp after it stores its dequanted fragments.
-        if (thread_id < kNumStages) __mbarrier_init(&smem.dq_mbar[thread_id], kNumLoadThreads / 32);
+        // One arrive per dequant warp after it stores its fragments.
+        constexpr uint32_t kNumDequantWarps =
+            (TuningConfig::kNumDequantThreads ? TuningConfig::kNumDequantThreads : kNumLoadThreads) / 32;
+        if (thread_id < kNumStages) __mbarrier_init(&smem.dq_mbar[thread_id], kNumDequantWarps);
       }
     }
   }
@@ -308,7 +310,11 @@ public:
   // Producer-dequant handshake: B fragments for a stage are usable only after
   // the producer warp group has dequanted them into smem.bf8.
   CUDA_INLINE void wait_dq(uint32_t stage_id) {
+#ifdef HUMMING_PERF_PROBE_SKIP_DQ
+    if constexpr (false) {
+#else
     if constexpr (TuningConfig::kUseProducerDequant) {
+#endif
       stage_id = stage_id % kNumStages;
       mbarrier_wait(&smem.dq_mbar[stage_id], dq_phases[stage_id]);
       dq_phases[stage_id] ^= 1;
