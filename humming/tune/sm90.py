@@ -88,6 +88,32 @@ class Sm90Heuristics(DeviceHeuristics):
             config["use_warp_spec"] = True
             config["use_mbarrier"] = True
 
+            forced_stages = int(os.environ.get("HUMMING_INDEXED_STAGES", "0"))
+            if forced_stages:
+                config["num_stages"] = forced_stages
+
+            forced_n = int(os.environ.get("HUMMING_INDEXED_BLOCKN", "0"))
+            if forced_n:
+                config["block_shape"] = (min(block_shape_m, 64), forced_n, warp_shape_k)
+                config["warp_shape"] = (min(block_shape_m, 64), 32, warp_shape_k)
+
+            if (
+                os.environ.get("HUMMING_INDEXED_PDQ", "0") == "1"
+                and meta.use_fused_e8m0_scale
+                and block_shape_m <= 96
+            ):
+                # Producer-dequant shape: one math warpgroup (BlockN 128) plus
+                # one producer/dequant warpgroup; B fragments land in smem as
+                # FP8 so the math warps issue no dequant instructions.
+                # BlockM capped at 64: one warpgroup with the double
+                # accumulator needs ~2*BlockM regs/thread for C alone, and 96
+                # rows (~264 regs live) exceeds the 255-reg architectural
+                # ceiling -> unavoidable spills (measured 192-1100 LDL/STL).
+                pdq_block_m = min(block_shape_m, 64)
+                config["block_shape"] = (pdq_block_m, 128, warp_shape_k)
+                config["warp_shape"] = (pdq_block_m, 32, warp_shape_k)
+                config["use_producer_dequant"] = True
+
         return config
 
     @classmethod

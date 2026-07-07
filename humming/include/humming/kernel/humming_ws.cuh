@@ -8,6 +8,7 @@
 
 #include <humming/epilogue/pipeline.cuh>
 #include <humming/memory/g2s_pipeline.cuh>
+#include <humming/memory/producer_dequant.cuh>
 #include <humming/memory/s2r_pipeline.cuh>
 #include <humming/mma/wgmma.cuh>
 #include <humming/mma/wmma.cuh>
@@ -98,7 +99,11 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
   auto pbias = [&]() {if constexpr (TuningConfig::kUseTmaBias) return &Bias; else return Bias; };
   auto scheduler = Scheduler(smem, pc(), tensor_map_buffer, shape_m, top_k, sorted_ids_ptr, expert_ids_ptr, num_tokens_padded_ptr, expert_layout_ptr, use_int64_expert_layout);
   if (threadIdx.x >= TuningConfig::kNumMathThreads) {
-    if constexpr (TuningConfig::kNumMathThreads > 256) {
+    // Producer-dequant runs with small blocks (128+128); every thread can hold
+    // the full per-thread register budget, so skip the reallocation and leave
+    // the producer warps enough registers for the dequant cascade.
+    if constexpr (TuningConfig::kUseProducerDequant) {
+    } else if constexpr (TuningConfig::kNumMathThreads > 256) {
       asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" ::"n"(40));
     } else if constexpr (TuningConfig::kNumCtasPerSm == 1 && ElementA::kBits != 16) {
       asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" ::"n"(40));
@@ -107,6 +112,13 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
     }
 
     auto producer = ProducerPipeline(smem, pa(), pb(), pas(), pbs(), pbzp(), pbias(), shape_m);
+    using ProducerDequant = ProducerDequantB<
+        MmaOpClass, SharedStorage, BlockShape, WarpShape,
+        ElementA, ElementB, ElementBS, LayerConfig, TuningConfig>;
+    [[maybe_unused]] auto dq = [&]() {
+      if constexpr (TuningConfig::kUseProducerDequant) return ProducerDequant(smem);
+      else return 0;
+    }();
     producer.init_mbarrier();
     __syncthreads();
     while (scheduler.get_next_block()) {
@@ -132,21 +144,31 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
         producer.load_stage(stage_id, stage_id < slice_iters);
       };
 
+      bool first_block_iter = true;
       while (slice_iters) {
         PRAGMA_UNROLL
         for (uint32_t stage_id = 0; stage_id < kNumStages; stage_id++) {
           if (slice_iters == 1) producer.load_channel();
+          // Dequant BEFORE the math-mbar wait: the consumer cannot make
+          // progress on this stage (and hence arrive) until dq_mbar fires.
+          // Overwrite of bf8[stage] is safe: the previous-round math arrive
+          // for this stage (consumed one round ago) implies the consumer
+          // finished reading it.
+          if constexpr (TuningConfig::kUseProducerDequant) {
+            dq.process_stage(stage_id, first_block_iter && stage_id == 0);
+          }
           producer.wait_stage(stage_id);
           producer.load_stage(stage_id + kNumStages - 1, slice_iters >= kNumStages);
           slice_iters--;
           if (!slice_iters) break;
         }
+        first_block_iter = false;
       }
     }
   } else {
     if constexpr (TuningConfig::kNumMathThreads > 256) {
       asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" ::"n"(96));
-    } else {
+    } else if constexpr (!TuningConfig::kUseProducerDequant) {
       asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" ::"n"(232));
     }
 
@@ -169,6 +191,7 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
       epilogue.set_streamk_state(scheduler.slice_count, scheduler.slice_id, scheduler.locks_offset);
 
       consumer.wait_stage<true>(kNumStages);
+      consumer.wait_dq(0);
       s2r_pipe.load_stage_iter<true>(0, 0);
       mma.transform_b(0);
 
@@ -180,16 +203,32 @@ __global__ __launch_bounds__(TuningConfig::kNumThreads, TuningConfig::kNumCtasPe
 
           PRAGMA_UNROLL
           for (uint32_t warp_k_iter_id = 0; warp_k_iter_id < warp_k_iters; warp_k_iter_id++) {
-            s2r_pipe.load_stage_iter(stage_id, warp_k_iter_id + 1);
-            mma.run(stage_id, warp_k_iter_id);
-            if (warp_k_iter_id == warp_k_iters - 2) {
-              consumer.arrive(stage_id);
-              if (slice_iters > 1) {
-                consumer.wait_stage((stage_id + 1) % kNumStages);
+            if constexpr (TuningConfig::kUseProducerDequant || std::is_same<ElementA, ElementB>::value) {
+              // s2r writes regs_b directly here, so it must come AFTER run():
+              // run's wait<1> drains the group that was still reading the
+              // regs_b buffer the next s2r refills.
+              mma.run(stage_id, warp_k_iter_id);
+              if (warp_k_iter_id == warp_k_iters - 2) {
+                consumer.arrive(stage_id);
+                if (slice_iters > 1) {
+                  consumer.wait_stage((stage_id + 1) % kNumStages);
+                  consumer.wait_dq((stage_id + 1) % kNumStages);
+                }
               }
-            }
+              s2r_pipe.load_stage_iter(stage_id, warp_k_iter_id + 1);
+            } else {
+              s2r_pipe.load_stage_iter(stage_id, warp_k_iter_id + 1);
+              mma.run(stage_id, warp_k_iter_id);
+              if (warp_k_iter_id == warp_k_iters - 2) {
+                consumer.arrive(stage_id);
+                if (slice_iters > 1) {
+                  consumer.wait_stage((stage_id + 1) % kNumStages);
+                  consumer.wait_dq((stage_id + 1) % kNumStages);
+                }
+              }
 
-            mma.transform_b((warp_k_iter_id + 1) % 2);
+              mma.transform_b((warp_k_iter_id + 1) % 2);
+            }
           }
 
           slice_iters--;
