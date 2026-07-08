@@ -1,3 +1,4 @@
+import os
 import math
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,17 @@ class Sm90Heuristics(DeviceHeuristics):
     ):
         if use_f16_accum:
             max_block_m = 256
+        elif meta.use_fused_e8m0_scale and meta.input_scale_group_size > 0:
+            # The correct group-input-scale fold keeps a second C accumulator
+            # live through the mainloop, so the register budget per tile is
+            # roughly halved versus the plain fused-E8M0 path. BlockM 176
+            # falls off a register/spill cliff (measured M192 indexed:
+            # 8.37 ms/layer at [176,256,128] vs 2.12 ms at [96,256,128];
+            # BlockM sweep at M96 puts the optimum at 96). Cap the tile.
+            max_block_m = 96
+            forced_max_block_m = int(os.environ.get("HUMMING_INDEXED_MAX_BLOCK_M", "0"))
+            if forced_max_block_m:
+                max_block_m = min(max_block_m, forced_max_block_m)
         else:
             max_block_m = 176
 
