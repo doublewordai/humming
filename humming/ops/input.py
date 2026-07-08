@@ -153,22 +153,25 @@ def _swiglu_clamp_quant_kernel(
     x_ptr,
     xq_ptr,
     scale_ptr,
+    M,
     stride_x: tl.constexpr,
     stride_xq: tl.constexpr,
     stride_scale: tl.constexpr,
     hidden: tl.constexpr,
     group_size: tl.constexpr,
     swiglu_limit: tl.constexpr,
-    BLOCK: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
 ):
-    row_id = tl.program_id(0).to(tl.int64)
+    pid_m = tl.program_id(0)
     group_id = tl.program_id(1).to(tl.int64)
-    cols = group_id * group_size + tl.arange(0, BLOCK)
-    mask = cols < hidden
+    rows = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    cols = group_id * group_size + tl.arange(0, BLOCK_N)
+    mask = (rows[:, None] < M) & (cols[None, :] < hidden)
 
-    row_ptr = x_ptr + row_id * stride_x
-    gate = tl.load(row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-    up = tl.load(row_ptr + hidden + cols, mask=mask, other=0.0).to(tl.float32)
+    ptrs = x_ptr + rows[:, None] * stride_x + cols[None, :]
+    gate = tl.load(ptrs, mask=mask, other=0.0).to(tl.float32)
+    up = tl.load(ptrs + hidden, mask=mask, other=0.0).to(tl.float32)
 
     if swiglu_limit > 0:
         gate = tl.minimum(gate, swiglu_limit)
@@ -176,11 +179,12 @@ def _swiglu_clamp_quant_kernel(
 
     activated = gate * tl.sigmoid(gate) * up
     activated = activated.to(tl.bfloat16).to(tl.float32)
-    scale = tl.maximum(tl.max(tl.abs(activated), axis=0), 1.0e-30) / 448.0
-    x_q = (activated / scale).to(tl.float8e4nv)
+    scale = tl.maximum(tl.max(tl.abs(activated), axis=1), 1.0e-30) / 448.0
+    x_q = (activated / scale[:, None]).to(tl.float8e4nv)
 
-    tl.store(xq_ptr + row_id * stride_xq + cols, x_q, mask=mask)
-    tl.store(scale_ptr + row_id * stride_scale + group_id, scale)
+    out_ptrs = xq_ptr + rows[:, None] * stride_xq + cols[None, :]
+    tl.store(out_ptrs, x_q, mask=mask)
+    tl.store(scale_ptr + rows * stride_scale + group_id, scale, mask=rows < M)
 
 
 def swiglu_clamp_quant_input(
@@ -227,18 +231,23 @@ def swiglu_clamp_quant_input(
         assert outputs_2d.is_contiguous()
         assert scales_2d.is_contiguous()
 
+        BLOCK_M = 16
         BLOCK = triton.next_power_of_2(group_size)
         num_warps = min(max(group_size // 32, 1), 8)
-        _swiglu_clamp_quant_kernel[(outputs_2d.size(0), hidden // group_size)](
+        _swiglu_clamp_quant_kernel[
+            (triton.cdiv(outputs_2d.size(0), BLOCK_M), hidden // group_size)
+        ](
             inputs_2d,
             outputs_2d,
             scales_2d,
+            outputs_2d.size(0),
             inputs_2d.stride(0),
             outputs_2d.stride(0),
             scales_2d.stride(0),
             hidden,
             group_size,
             swiglu_limit,
+            BLOCK_M,
             BLOCK,
             num_warps=num_warps,
             num_stages=1,
