@@ -464,6 +464,66 @@ class HummingLayerMethod:
         cls.may_set_param(layer, meta.bias_name, bias)
 
     @classmethod
+    def _try_vllm_group_quant_input(
+        cls,
+        inputs: torch.Tensor,
+        quanted_input: torch.Tensor | None,
+        meta: HummingLayerMeta,
+        sublayer_name: str,
+    ) -> tuple[torch.Tensor, torch.Tensor | None] | None:
+        if os.getenv("HUMMING_USE_VLLM_GROUP_QUANT", "0").lower() not in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            return None
+        if sublayer_name != "w13":
+            return None
+        if meta.a_dtype != dtypes.float8e4m3:
+            return None
+        group_size = meta.input_scale_group_size
+        if group_size != 128:
+            return None
+        if inputs.size(-1) % group_size != 0:
+            return None
+        if not hasattr(torch.ops, "_C") or not hasattr(
+            torch.ops._C, "per_token_group_fp8_quant"
+        ):
+            return None
+
+        output_shape = inputs.shape
+        if quanted_input is None:
+            quanted_input = torch.empty(
+                output_shape, dtype=torch.float8_e4m3fn, device=inputs.device
+            )
+        assert quanted_input.shape == output_shape
+        assert quanted_input.dtype == torch.float8_e4m3fn
+        assert quanted_input.device == inputs.device
+
+        inputs_2d = inputs.view(-1, inputs.size(-1))
+        outputs_2d = quanted_input.view(-1, quanted_input.size(-1))
+        input_scale = torch.empty(
+            (inputs_2d.size(0), inputs_2d.size(1) // group_size),
+            dtype=torch.float32,
+            device=inputs.device,
+        )
+        finfo = torch.finfo(torch.float8_e4m3fn)
+        torch.ops._C.per_token_group_fp8_quant.default(
+            inputs_2d,
+            outputs_2d,
+            input_scale,
+            group_size,
+            1.0e-10,
+            float(finfo.min),
+            float(finfo.max),
+            False,
+            False,
+            False,
+        )
+        return quanted_input, input_scale.view(*output_shape[:-1], input_scale.size(-1))
+
+    @classmethod
     def may_quant_input(
         cls,
         layer: HummingModule | torch.nn.Module,
@@ -478,6 +538,14 @@ class HummingLayerMethod:
             return inputs, None
         if input_scale is not None:
             return inputs, input_scale
+        vllm_group_quant = cls._try_vllm_group_quant_input(
+            inputs=inputs,
+            quanted_input=quanted_input,
+            meta=meta,
+            sublayer_name=sublayer_name,
+        )
+        if vllm_group_quant is not None:
+            return vllm_group_quant
         quanted_input, input_scale = ops.quant_input(
             inputs=inputs,
             outputs=quanted_input,
