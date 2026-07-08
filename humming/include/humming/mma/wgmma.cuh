@@ -12,6 +12,7 @@ CUDA_INLINE uint64_t make_wgmma_smem_desc(uint32_t addr) {
   constexpr uint64_t desc_base = (swizzle_type << 62) | (stride << 32);
 
   uint64_t desc = desc_base;
+
   reinterpret_cast<uint32_t *>(&desc)[0] = (addr >> 4);
 
   return desc;
@@ -63,7 +64,6 @@ public:
     smem_offset = row_offset * (kSwizzleBytes / 16);
     smem_offset += (col_offset % kSwizzleSizeK) * ElementA::kBits / 128;
     smem_offset += (col_offset / kSwizzleSizeK) * (BlockShape::M * kSwizzleBytes / 16);
-    smem_offset = smem_offset * sizeof(int4);
   }
 
   CUDA_INLINE
@@ -103,38 +103,52 @@ public:
     static_assert(WarpShape::M == MmaShape::M);
     uint32_t buffer_id = iter_id % 2;
 
-    const uint32_t smem_base = cast_smem_ptr_to_uint(&smem);
-
     PRAGMA_UNROLL
     for (uint32_t k = 0; k < kPartMmaShapeK / MmaShape::K; k++) {
-      uint32_t smem_addr = smem_base + offsetof(SharedStorage, stages) + stage_id * sizeof(typename SharedStorage::StageStorage);
-      smem_addr += (iter_id * 2 + k) * sizeof(int4) + smem_offset;
+      uint32_t smem_addr = cast_smem_ptr_to_uint(&smem) + offsetof(SharedStorage, stages) + stage_id * sizeof(typename SharedStorage::StageStorage);
+      smem_addr += (iter_id * 2 + k + smem_offset) * sizeof(int4);
       uint64_t desc = make_wgmma_smem_desc<kSwizzleBytes>(smem_addr);
 
       constexpr uint32_t kNumIters = WarpShape::N / (MmaShape::N / 4);
 
       bool scale_d = true;
-      constexpr bool kFusedGroupInputScale =
-          kUseFusedE8m0Scale && ElementA::kBits != 16 && LayerConfig::kInputScaleGroupSize > 0;
-      constexpr bool kApplyScaleOnC = (!kUseFusedE8m0Scale && ElementA::kBits != 16 &&
-          (LayerConfig::kInputScaleGroupSize > 0 || LayerConfig::kWeightScaleGroupSize > 0))
-          || kFusedGroupInputScale;
+      bool apply_scale_on_c = false;
+      uint32_t k_index = iter_id * kPartMmaShapeK + (k + 1) * MmaShape::K;
+      uint32_t is_last_iter = iter_id == (kWarpItersK - 1);
       if constexpr (ElementA::kBits != 16 && LayerConfig::kInputScaleGroupSize > 0) {
         scale_d = (iter_id * kPartMmaShapeK) % LayerConfig::kInputScaleGroupSize > 0;
+        apply_scale_on_c = is_last_iter || (k_index % LayerConfig::kInputScaleGroupSize == 0);
       }
       if constexpr (!kUseFusedE8m0Scale && ElementA::kBits != 16 && LayerConfig::kWeightScaleGroupSize > 0) {
         scale_d = scale_d && (iter_id * kPartMmaShapeK) % LayerConfig::kWeightScaleGroupSize > 0;
+        apply_scale_on_c = apply_scale_on_c || is_last_iter || (k_index % LayerConfig::kWeightScaleGroupSize == 0);
       }
 
       wgmma_fence();
-      PRAGMA_UNROLL
-      for (uint32_t j = 0; j < kNumIters; j++) {
-        if constexpr (kApplyScaleOnC) fence_regs(regs_c[0][j][0]);
-        MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
+      if (apply_scale_on_c) {
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          fence_regs(regs_c[0][j][0]);
+          MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
+        }
         wgmma_commit();
         wgmma_wait<0>();
-        if constexpr (kApplyScaleOnC) fence_regs(regs_c[0][j][0]);
-        arith.may_apply_as_and_bs_on_wgmma_c(regs_c_as_ptr(), j, k, iter_id);
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          fence_regs(regs_c[0][j][0]);
+          if constexpr (kUseFusedE8m0Scale && ElementA::kBits != 16 && LayerConfig::kInputScaleGroupSize > 0) {
+            arith.apply_fused_group_as_on_wgmma_c(regs_c_as_ptr(), j, iter_id);
+          } else {
+            arith.may_apply_as_and_bs_on_wgmma_c(regs_c_as_ptr(), j, k, iter_id);
+          }
+        }
+      } else {
+        PRAGMA_UNROLL
+        for (uint32_t j = 0; j < kNumIters; j++) {
+          MmaOpClass::fma(desc, regs_b[buffer_id][j][k], regs_c[0][j][0], scale_d);
+          wgmma_commit();
+          wgmma_wait<0>();
+        }
       }
     }
   };
