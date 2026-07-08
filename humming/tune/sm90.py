@@ -42,6 +42,9 @@ class Sm90Heuristics(DeviceHeuristics):
             # 8.37 ms/layer at [176,256,128] vs 2.12 ms at [96,256,128];
             # BlockM sweep at M96 puts the optimum at 96). Cap the tile.
             max_block_m = 96
+            forced_max_block_m = int(os.environ.get("HUMMING_INDEXED_MAX_BLOCK_M", "0"))
+            if forced_max_block_m:
+                max_block_m = min(max_block_m, forced_max_block_m)
         else:
             max_block_m = 176
 
