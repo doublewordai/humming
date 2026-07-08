@@ -314,8 +314,8 @@ def quant_input(
         BLOCK = triton.next_power_of_2(group_size)
         # Merge multiple groups per block to reduce scheduling overhead.
         groups_per_block = 1
-        if group_size <= 256 and num_blocks >= 131072:
-            # Small group_size (e.g. 128) with massive block count
+        if group_size <= 256 and num_blocks >= 65536:
+            # Small group_size (e.g. 128) with large block count
             groups_per_block = min(1024 // group_size, num_blocks)
         grid_blocks = (num_blocks + groups_per_block - 1) // groups_per_block
         effective_block = BLOCK // 2 if dtype in ("int4", "float4e2m1") else BLOCK
