@@ -89,3 +89,28 @@ def test_mxfp4_case_coverage():
         GemmType.GROUPED_MASKED,
     }
     assert all(case.layer_config.input_scale_group_size > 0 for _, case in MXFP4_CASES)
+
+
+@pytest.mark.parametrize("block_m", [8, 16, 32])
+@pytest.mark.parametrize("stream_k", [False, True])
+def test_indexed_fp32_accumulator_access(block_m, stream_k, monkeypatch):
+    """Small indexed tiles exercise local accumulator spills and smem reduction.
+
+    Run under compute-sanitizer as well as numerical comparison: the original
+    vector local accesses can fault even when the GEMM shape is supported.
+    """
+    from humming.tune import get_heuristics_config
+
+    test_case = _case("indexed-accumulator-access", gemm_type=GemmType.INDEXED)
+    skip_if_unsupported(a_dtype=test_case.layer_config.a_dtype, mma_type="wgmma")
+    config = dict(get_heuristics_config(test_case.layer_config, shape_m=64, gemm_type="indexed"))
+    _, block_n, _ = config["block_shape"]
+    _, warp_n, warp_k = config["warp_shape"]
+    config.update(
+        block_shape=(block_m, block_n, 256),
+        warp_shape=(block_m, warp_n, warp_k),
+        use_stream_k=stream_k,
+    )
+    monkeypatch.setattr("humming.testing.runner.generate_heuristics_configs", lambda *a, **kw: [config])
+    results = KernelTestRunner(test_case).run((1, 17, 257))
+    assert_kernel_test_shape_coverage(results, (1, 17, 257))
