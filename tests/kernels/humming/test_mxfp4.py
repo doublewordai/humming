@@ -111,6 +111,9 @@ def test_indexed_fp32_accumulator_access(block_m, stream_k, monkeypatch):
         warp_shape=(block_m, warp_n, warp_k),
         use_stream_k=stream_k,
     )
-    monkeypatch.setattr("humming.testing.runner.generate_heuristics_configs", lambda *a, **kw: [config])
+    monkeypatch.setattr(
+        "humming.testing.runner.generate_heuristics_configs",
+        lambda layer, compute, shapes: [dict(config) for _ in shapes],
+    )
     results = KernelTestRunner(test_case).run((1, 17, 257))
     assert_kernel_test_shape_coverage(results, (1, 17, 257))
