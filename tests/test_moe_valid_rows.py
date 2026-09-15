@@ -18,8 +18,8 @@ def reference(x, activation=False):
         silu = (gate / (1 + torch.exp(-gate))).bfloat16().float()
         x = (silu * up).bfloat16()
     values = x.float().reshape(x.shape[0], -1, 128)
-    scales = values.abs().amax(-1).clamp_min(1e-10) / 448
-    q = (values / scales.unsqueeze(-1)).to(torch.float8_e4m3fn).reshape(x.shape)
+    scales = (values.abs().amax(-1).clamp_min(1e-10).double() / 448).float()
+    q = (values.double() / scales.double().unsqueeze(-1)).float().to(torch.float8_e4m3fn).reshape(x.shape)
     return q, scales
 
 
