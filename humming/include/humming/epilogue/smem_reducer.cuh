@@ -53,7 +53,15 @@ public:
       PRAGMA_UNROLL
       for (uint32_t i = 0; i < num_values_per_time; i++) {
         if (m * num_values_per_time + i < num_values) {
-          smem_arr[buffer_id][group_id][i][laneid] = regs_value_ptr[i];
+          if constexpr (kUseInt4 && std::is_same<ValTypeC32, float>::value) {
+            const float *f = reinterpret_cast<const float *>(regs_ptr) +
+                             (m * num_values_per_time + i) * 4;
+            smem_arr[buffer_id][group_id][i][laneid] = make_int4(
+                __float_as_int(f[0]), __float_as_int(f[1]),
+                __float_as_int(f[2]), __float_as_int(f[3]));
+          } else {
+            smem_arr[buffer_id][group_id][i][laneid] = regs_value_ptr[i];
+          }
         }
       };
     };
@@ -67,14 +75,23 @@ public:
         if (m * num_values_per_time + i >= num_values) continue;
         ReductionValue val = smem_arr[buffer_id][group_id][i][laneid];
 
-        ValTypeC32 *sval_ptr = reinterpret_cast<ValTypeC32 *>(&val);
-        ValTypeC32 *reg_ptr = reinterpret_cast<ValTypeC32 *>(regs_value_ptr + i);
-        PRAGMA_UNROLL
-        for (uint32_t j = 0; j < num_scalars_per_value; j++) {
-          if constexpr (sizeof(MmaTypeC) == 2) {
-            reg_ptr[j] = __hadd2(reg_ptr[j], sval_ptr[j]);
-          } else {
-            reg_ptr[j] += sval_ptr[j];
+        if constexpr (kUseInt4 && std::is_same<ValTypeC32, float>::value) {
+          float *f = reinterpret_cast<float *>(regs_ptr) +
+                     (m * num_values_per_time + i) * 4;
+          f[0] += __int_as_float(val.x);
+          f[1] += __int_as_float(val.y);
+          f[2] += __int_as_float(val.z);
+          f[3] += __int_as_float(val.w);
+        } else {
+          ValTypeC32 *sval_ptr = reinterpret_cast<ValTypeC32 *>(&val);
+          ValTypeC32 *reg_ptr = reinterpret_cast<ValTypeC32 *>(regs_value_ptr + i);
+          PRAGMA_UNROLL
+          for (uint32_t j = 0; j < num_scalars_per_value; j++) {
+            if constexpr (sizeof(MmaTypeC) == 2) {
+              reg_ptr[j] = __hadd2(reg_ptr[j], sval_ptr[j]);
+            } else {
+              reg_ptr[j] += sval_ptr[j];
+            }
           }
         }
       };
