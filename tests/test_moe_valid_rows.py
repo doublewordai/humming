@@ -23,7 +23,7 @@ def reference(x, activation=False):
     return q, scales
 
 
-@pytest.mark.parametrize("block", [8, 16, 32, 64])
+@pytest.mark.parametrize("block", [8, 16, 32, 64, 96, 176])
 def test_indices_changing_counts_graph(block):
     counts = torch.tensor([0, 1, 17, 32], device="cuda", dtype=torch.int32)
     masked_indices(counts, 32, block)
